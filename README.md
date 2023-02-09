@@ -1,4 +1,4 @@
-# scripts_temperature_precipitation_rhizosphere_root_microbiome
+# Norway_temperature_precipitation_rhizosphere_root_microbiome
 
 R scripts for publication:
 

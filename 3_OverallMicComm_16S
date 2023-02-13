@@ -406,3 +406,63 @@ plot <- ggplot(data=adiv_16S, aes(x=as.factor(temperature), y=Observed, fill = a
   theme(panel.grid.major = element_blank())+
   theme(strip.text.x=element_text(size=10), strip.background=element_rect(fill="grey"))
 plot
+
+#Add statistics
+library(nlme)
+library(car)
+library(lme4)
+
+#Rhizosphere
+head(adiv_16S_rhizo)
+str(adiv_16S_rhizo)
+adiv_16S_rhizo$location <- as.factor(adiv_16S_rhizo$location)
+adiv_16S_rhizo$compartment <- as.factor(adiv_16S_rhizo$compartment)
+adiv_16S_rhizo$temperature <- as.factor(adiv_16S_rhizo$temperature)
+adiv_16S_rhizo$precipitation <- as.factor(adiv_16S_rhizo$precipitation)
+
+#With random location
+m1 <- lme(log(Observed) ~ temperature * precipitation, random = ~1|location, data=adiv_16S_rhizo)
+qqnorm(resid(m1))
+plot(m1)
+Anova(m1, type = 3)
+
+m1 <- lme(Shannon ~ temperature * precipitation, random = ~1|location, data=adiv_16S_rhizo)
+qqnorm(resid(m1))
+plot(m1)
+Anova(m1, type = 3)
+
+#Emmeans
+library(emmeans)
+m1 <- lm(Shannon ~ temperature * precipitation, data=adiv_16S_rhizo) #Cannot handle random effects
+emmeans(m1, pairwise ~ temperature | precipitation)
+
+m1 <- lm(log(Observed) ~ temperature * precipitation, data=adiv_16S_rhizo)
+emmeans(m1, pairwise ~ temperature | precipitation)
+
+#Root
+head(adiv_16S_root)
+str(adiv_16S_root)
+adiv_16S_root$location <- as.factor(adiv_16S_root$location)
+adiv_16S_root$compartment <- as.factor(adiv_16S_root$compartment)
+adiv_16S_root$temperature <- as.factor(adiv_16S_root$temperature)
+adiv_16S_root$precipitation <- as.factor(adiv_16S_root$precipitation)
+
+#With random location
+m1 <- lme(log(Observed) ~ temperature * precipitation, random = ~1|location, data=adiv_16S_root)
+qqnorm(resid(m1))
+plot(m1)
+Anova(m1, type = 3)
+
+m1 <- lme(Shannon ~ temperature * precipitation, random = ~1|location, data=adiv_16S_root)
+qqnorm(resid(m1))
+plot(m1)
+Anova(m1, type = 3)
+
+#Emmeans
+library(emmeans)
+m1 <- lm(Shannon ~ temperature * precipitation, data=adiv_16S_root) #Cannot handle random effects
+emmeans(m1, pairwise ~ temperature | precipitation)
+
+m1 <- lm(log(Observed) ~ temperature * precipitation, data=adiv_16S_root)
+emmeans(m1, pairwise ~ temperature | precipitation)
+

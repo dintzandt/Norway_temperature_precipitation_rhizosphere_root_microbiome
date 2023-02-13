@@ -1,0 +1,597 @@
+rm(list=ls())
+getwd()
+setwd("D:/Prague/4. Norway/R") #PC
+
+library("phyloseq")
+library("vegan")
+library("DESeq2")
+library("ggplot2")
+library("dendextend")
+library("tidyr")
+library("viridis")
+library("reshape")
+library("plyr")
+library("data.table")
+library("stringr")
+
+#Read in ITS data
+count_tab <- read.table("ASVs_counts_nohit_nocontam_ITS_blk1contam.tsv", sep="\t",header=T, row.names=1)[ , -c(61:62, 183:184)] #removes the blank samples
+tax_tab <- as.matrix(read.table("ASVs_taxonomy_nohit_nocontam_ITS_blk1contam.tsv", header=T, row.names=1, sep="\t"))
+sample_info_tab <- read.table("sample_info_both.txt", sep="\t",header=T)
+soil_chem <- read.table("soil_chemistry_both.txt", sep="\t",header=T)
+load("Climate.Rda")
+load("Mveg_2019.RDa")
+colnames(Mveg)
+load("dataHeight_2019.RDa")
+colnames(dataHeight)
+load("dataCover_2019.RDa")
+colnames(dataCover)
+
+#Make transformations in soil chem data
+soil_chem$tNH4 <- log(soil_chem$NH4+0.001)
+soil_chem$tNO3 <- log(soil_chem$NO3+0.001)
+soil_chem$tC <- sqrt(soil_chem$C)
+soil_chem$tCa <- log(soil_chem$Ca)
+soil_chem$tMg <- log(soil_chem$Mg)
+soil_chem$tK <- log(soil_chem$K)
+soil_chem$tP <- log(soil_chem$P)
+
+#Calculate total reads
+df <- data.frame(rowSums(t(count_tab)))
+colnames(df) <- c("total_reads")
+df$sample.code <- row.names(df)
+
+#Merge with alpha div and SI
+load("SI_ITS_both_rare_noprune.RDa")
+load("adiv_ITS_both.RDa")
+head(SI_ITS)
+head(adiv_ITS)
+SI <- SI_ITS[, c(1,3)]
+adiv <- adiv_ITS[, c(1:3)]
+temp <- merge(df, SI, id = c("sample.code"), all=T)
+temp2 <- merge(temp, adiv, id = c("sample.code"), all=T)
+temp3 <- merge(soil_chem, temp2, id = c("sample.code"), all=T)
+temp3$Treatment <- NULL
+temp3$Compartment <- NULL
+
+#Merge soil chemistry to sample info tab
+sample_info_tab <- merge(sample_info_tab, temp3, id = c("sample.code"), all=T)
+row.names(sample_info_tab) <- sample_info_tab$sample.code
+
+#Add climate variables to sample info
+head(Climate)
+head(sample_info_tab)
+sample_info_tab <- merge(sample_info_tab, Climate, by = c("location"), all = T)
+
+#Merge to height and moss cover
+sample_info_tab <- merge(sample_info_tab, dataHeight[,-c(1:8)], by = c("location"), all = T)
+sample_info_tab <- merge(sample_info_tab, dataCover[,-c(1)], by = c("location"), all = T)
+head(sample_info_tab)
+
+#Check tables
+str(count_tab)
+str(tax_tab)
+str(sample_info_tab)
+sample_info_tab$precipitation <- as.numeric(sample_info_tab$precipitation)
+sample_info_tab$treatment <- factor(paste(sample_info_tab$precipitation, sample_info_tab$temperature, sep = "_"))
+sample_info_tab$comp_treat <- factor(paste(sample_info_tab$compartment, sample_info_tab$treatment, sep = "_"))
+
+#Match count table column order to order in sample info tab
+row.names(sample_info_tab) <- sample_info_tab$sample.code
+colnames(count_tab)
+setcolorder(count_tab, as.character(row.names(sample_info_tab)))
+
+#Add colours
+levels(sample_info_tab$treatment)
+sample_info_tab$colour <- revalue(sample_info_tab$treatment, c("600_10.5" = "#D55E00", "600_8.5" = "red", "600_6.5" = "#CC79A7",
+                                                               "1200_10.5" = "#E69F00", "1200_8.5" = "orange", "1200_6.5" = "#F0E442",
+                                                               "2000_10.5" = "#009E73", "2000_8.5" = "#33CC33", "2000_6.5" = "#99FF66",
+                                                               "2700_10.5" = "#0072B2", "2700_8.5" = "blue", "2700_6.5" = "#56B4E9"))
+sample_info_tab$colour_precip <- revalue(factor(sample_info_tab$precipitation), c("600" = "#D55E00", "1200" = "#E69F00", "2000" = "#009E73", "2700" = "#0072B2"))
+sample_info_tab$colour_temp <- revalue(factor(sample_info_tab$temperature), c("10.5" = "#D55E00", "8.5" = "#009E73", "6.5" = "#0072B2"))
+
+#Make phyloseq object
+count_tab_phy <- otu_table(count_tab, taxa_are_rows=T)
+tax_tab_phy <- tax_table(tax_tab)
+sample_info_tab_phy <- sample_data(sample_info_tab)
+ASV_physeq <- phyloseq(count_tab_phy, tax_tab_phy, sample_info_tab_phy)
+
+#Prune taxa
+ps <- prune_taxa(taxa_sums(ASV_physeq) > 100, ASV_physeq)
+ASV_physeq <- ps
+
+#Calculate sample sums to add to sample info
+tot_reads <- data.frame(sample_sums(ASV_physeq))
+str(tot_reads)
+#save(tot_reads, file="tot_reads.txt")
+
+#Remove samples below 1000 reads
+sum(sample_sums(ASV_physeq)<1000) #1 sample
+ps <- prune_samples(sample_sums(ASV_physeq) > 1000, ASV_physeq)
+ASV_physeq <- ps
+
+#Remove GUD.6 as it is likely not Festuca
+ps <- subset_samples(ASV_physeq, !sample.code %in% c("GUD.S6", "GUD.R.6"))
+ASV_physeq <- ps
+
+#Remove replicates 9 and 10, because this was a different batch and they are really weird
+temp <- subset_samples(ASV_physeq, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".S", 9))
+temp2 <- subset_samples(temp, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".S", 10))
+temp3 <- subset_samples(temp2, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".R.", 9))
+temp4 <- subset_samples(temp3, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".R.", 10))
+ASV_physeq <- temp4
+
+#Make clr physeq objects
+#clr transformation
+clr_counts <- microbiome::transform(otu_table(ASV_physeq), "clr")
+clr_count_phy <- otu_table(clr_counts, taxa_are_rows=T)
+clr_physeq <- phyloseq(clr_count_phy, sample_info_tab_phy)
+clr_count_phy6 <- otu_table(clr_counts+6, taxa_are_rows=T)
+clr_physeq6 <- phyloseq(clr_count_phy6, sample_info_tab_phy)
+
+#########################################END OF DATA HANDLING################################################
+#For rhizosphere and root separately and with environmental parameters
+#Subset for rhizosphere and root
+clr_physeq_rhizo <- subset_samples(clr_physeq, compartment=="rhizosphere")
+clr_physeq_root <- subset_samples(clr_physeq, compartment=="root")
+
+######Using PCA - Rhizosphere#####
+#Using PCA
+clr_PCA_rhizo <- ordinate(clr_physeq_rhizo, "RDA")
+eigen_vals_rhizo <- clr_PCA_rhizo$CA$eig # allows us to scale the axes according to their magnitude of separating apart the samples
+eigen_vals_rhizo_perc <- sapply(clr_PCA_rhizo$CA$eig[1:5], function(x) x / sum(clr_PCA_rhizo$CA$eig)) 
+clr1 <- clr_PCA_rhizo$CA$eig[1] / sum(clr_PCA_rhizo$CA$eig)
+clr2 <- clr_PCA_rhizo$CA$eig[2] / sum(clr_PCA_rhizo$CA$eig)
+
+#Some quick figures
+plot_ordination(clr_physeq_rhizo, clr_PCA_rhizo, type="samples", color="location") + 
+  geom_point(size = 2) +
+  coord_fixed(clr2 / clr1) +
+  stat_ellipse(aes(group = location), linetype = 2)
+
+plot_ordination(clr_physeq_rhizo, clr_PCA_rhizo, color="treatment") + 
+  geom_point(size=1) + labs(col="type") + 
+  geom_text(aes(label=sample_data(clr_physeq)$sample.code[which(sample_data(clr_physeq)$compartment=="rhizosphere")], hjust=0.3, vjust=-0.4)) + 
+  coord_fixed(clr2 / clr1) + ggtitle("PCA - rhizosphere") + 
+  theme(legend.position="none")
+
+#Stats
+#Generate distance matrix
+clr_dist_matrix_rhizo <- phyloseq::distance(clr_physeq_rhizo, method = "euclidean")
+#ADONIS test
+vegan::adonis(clr_dist_matrix_rhizo ~ phyloseq::sample_data(clr_physeq_rhizo)$treatment) #significant separation
+vegan::adonis(clr_dist_matrix_rhizo ~ phyloseq::sample_data(clr_physeq_rhizo)$temperature * phyloseq::sample_data(clr_physeq_rhizo)$precipitation) #significant separation
+
+#Make much nicer plots for rhizosphere ITS
+PCA.env_rhizo <- envfit(clr_PCA_rhizo ~ P.grid + T.grid,
+                        data = data.frame(sample_data(clr_physeq_rhizo)), perm = 999, na.rm=TRUE)
+env.scores_rhizo <- scores(PCA.env_rhizo, "vectors") %>% round(., 3)  %>% as.data.frame() 
+
+#Make df for plot
+temp <- data.frame(scores(clr_PCA_rhizo)$sites)
+dfplot_rhizo <- merge(temp, data.frame(sample_data(clr_physeq_rhizo)), by = "row.names")
+str(dfplot_rhizo)
+
+#Calculate centroids
+cent_rhizo <- aggregate(cbind(PC1, PC2) ~ comp_treat, data = dfplot_rhizo, FUN = mean)
+cent_rhizo$compartment <- str_split_fixed(cent_rhizo$comp_treat, "_", 3)[,1]
+cent_rhizo$precip <- str_split_fixed(cent_rhizo$comp_treat, "_", 3)[,2]
+cent_rhizo$temperature <- str_split_fixed(cent_rhizo$comp_treat, "_", 3)[,3]
+segs_rhizo <- merge(dfplot_rhizo, setNames(cent_rhizo, c('comp_treat','oAxis.1','oAxis.2')),
+                    by = 'comp_treat', sort = FALSE)
+
+DEF <- 10
+
+plotITS_rhizo <- ggplot(dfplot_rhizo, aes(x = PC1, y = PC2)) + 
+  geom_hline(yintercept=0, linetype="longdash", colour="darkgrey", size=0.4)+
+  geom_vline(xintercept=0, linetype="longdash", colour="darkgrey", size=0.4)+
+  geom_point(data=dfplot_rhizo, aes(x = PC1, y = PC2, colour=factor(temperature), shape=factor(precipitation)), size=2)+
+  ggtitle("Fungi - rhizosphere") +
+  scale_colour_manual(values=c("#0072B2", "#E69F00", "#D55E00", "#999999", "#56B4E9", "#CC79A7", "black", "#009E73"), name="Temperature")+
+  scale_shape_manual(values=c(15, 16, 17, 18), name="Precipitation")+
+  geom_segment(data = segs_rhizo,
+               mapping = aes(xend = oAxis.1, yend = oAxis.2, colour=factor(temperature))) + # spiders
+  geom_point(data = cent_rhizo, size = 5, aes(colour=factor(temperature), shape=factor(precip))) +
+  geom_segment(data=env.scores_rhizo, aes(x=0, y=0, xend=PC1*DEF, yend=PC2*DEF), arrow=arrow(length = unit(0.03, "npc")), lwd=0.7, colour="black") + 
+  geom_text(data=env.scores_rhizo, aes(x=PC1*DEF, y=PC2*DEF), label= c("Precipitation *", ""), nudge_y = -0.5, size=4)  + 
+  geom_text(data=env.scores_rhizo, aes(x=PC1*DEF, y=PC2*DEF), label= c("", "Temperature ***"), nudge_y = -0.5, nudge_x = -1.2, size=4)  + 
+  xlab("PCA 1 - 7.9%")+ 
+  ylab("PCA 2 - 4.9%")+
+  theme_bw() +
+  theme(axis.title.y=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.title.x=element_text(size=11, colour = "black", margin=(margin(10,0,0,0))))+
+  theme(axis.text=element_text(size=10))+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.major = element_blank())
+
+plotITS_rhizo
+
+#PCA root
+clr_PCA_root <- ordinate(clr_physeq_root, "RDA")
+eigen_vals_root <- clr_PCA_root$CA$eig # allows us to scale the axes according to their magnitude of separating apart the samples
+eigen_vals_root_perc <- sapply(clr_PCA_root$CA$eig[1:5], function(x) x / sum(clr_PCA_root$CA$eig)) 
+clr1 <- clr_PCA_root$CA$eig[1] / sum(clr_PCA_root$CA$eig)
+clr2 <- clr_PCA_root$CA$eig[2] / sum(clr_PCA_root$CA$eig)
+
+#Some quick plots
+plot_ordination(clr_physeq_root, clr_PCA_root, type="samples", color="location") + 
+  geom_point(size = 2) +
+  coord_fixed(clr2 / clr1) +
+  stat_ellipse(aes(group = location), linetype = 2)
+
+plot_ordination(clr_physeq_root, clr_PCA_root, color="treatment") + 
+  geom_point(size=1) + labs(col="type") + 
+  geom_text(aes(label=sample_data(clr_physeq)$sample.code[which(sample_data(clr_physeq)$compartment=="root")], hjust=0.3, vjust=-0.4)) + 
+  coord_fixed(clr2 / clr1) + ggtitle("PCA - root") + 
+  theme(legend.position="none")
+
+#Stats
+#Generate distance matrix
+clr_dist_matrix_root <- phyloseq::distance(clr_physeq_root, method = "euclidean")
+#ADONIS test
+vegan::adonis(clr_dist_matrix_root ~ phyloseq::sample_data(clr_physeq_root)$treatment) #significant separation
+vegan::adonis(clr_dist_matrix_root ~ phyloseq::sample_data(clr_physeq_root)$temperature * phyloseq::sample_data(clr_physeq_root)$precipitation) #significant separation
+
+#Make nicer plots
+PCA.env_root <- envfit(clr_PCA_root ~ T.grid,
+                       data = data.frame(sample_data(clr_physeq_root)), perm = 999, na.rm=TRUE)
+env.scores_root <- scores(PCA.env_root, "vectors") %>% round(., 3)  %>% as.data.frame() 
+
+#Make df for plot
+temp <- data.frame(scores(clr_PCA_root)$sites)
+dfplot_root <- merge(temp, data.frame(sample_data(clr_physeq_root)), by = "row.names")
+str(dfplot_root)
+
+#Calculate centroids
+cent_root <- aggregate(cbind(PC1, PC2) ~ comp_treat, data = dfplot_root, FUN = mean)
+cent_root$compartment <- str_split_fixed(cent_root$comp_treat, "_", 3)[,1]
+cent_root$precip <- str_split_fixed(cent_root$comp_treat, "_", 3)[,2]
+cent_root$temperature <- str_split_fixed(cent_root$comp_treat, "_", 3)[,3]
+segs_root <- merge(dfplot_root, setNames(cent_root, c('comp_treat','oAxis.1','oAxis.2')),
+                   by = 'comp_treat', sort = FALSE)
+
+DEF <- 10
+
+plotITS_root <- ggplot(dfplot_root, aes(x = PC1, y = PC2)) + 
+  geom_hline(yintercept=0, linetype="longdash", colour="darkgrey", size=0.4)+
+  geom_vline(xintercept=0, linetype="longdash", colour="darkgrey", size=0.4)+
+  geom_point(data=dfplot_root, aes(x = PC1, y = PC2, colour=factor(temperature), shape=factor(precipitation)), size=2)+
+  ggtitle("Fungi - root") +
+  scale_colour_manual(values=c("#0072B2", "#E69F00", "#D55E00", "#999999", "#56B4E9", "#CC79A7", "black", "#009E73"), name="Temperature")+
+  scale_shape_manual(values=c(15, 16, 17, 18), name="Precipitation")+
+  geom_segment(data = segs_root,
+               mapping = aes(xend = oAxis.1, yend = oAxis.2, colour=factor(temperature))) + # spiders
+  geom_point(data = cent_root, size = 5, aes(colour=factor(temperature), shape=factor(precip))) +
+  geom_segment(data=env.scores_root, aes(x=0, y=0, xend=PC1*DEF, yend=PC2*DEF), arrow=arrow(length = unit(0.03, "npc")), lwd=0.7, colour="black") + 
+  geom_text(data=env.scores_root, aes(x=PC1*DEF, y=PC2*DEF), label= c("Temperature ***"), nudge_y = -0.5, nudge_x = -0.8, size=4)  + 
+  xlab("PCA 1 - 4.9%")+ 
+  ylab("PCA 2 - 4.2%")+
+  theme_bw() +
+  theme(axis.title.y=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.title.x=element_text(size=11, colour = "black", margin=(margin(10,0,0,0))))+
+  theme(axis.text=element_text(size=10))+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.major = element_blank())
+
+plotITS_root
+
+#Put together and save
+library(cowplot)
+prowAB <- plot_grid(plotITS_rhizo + theme(legend.position="none"), plotITS_root+ theme(legend.position="none"), labels=c("C", "D"), align="hv", label_size=12, vjust=1.1,
+                    nrow=1)
+legend <- get_legend(plotITS_rhizo + theme(legend.box.margin = margin(0, 0, 0, 12)))
+prow <- plot_grid(prowAB, legend, ncol = 2, rel_widths = c(2,.4))
+prow
+#save_plot("D:/Prague/4. Norway/MS/Figs/Fig_PCA_ITS.png", prow,
+#          ncol = 3, nrow = 1, base_aspect_ratio = 1, dpi=600)
+
+
+#####2 Alphadiversity#####
+#Make physeq without cut off 100
+ASV_physeq_2 <- phyloseq(count_tab_phy, tax_tab_phy, sample_info_tab_phy)
+
+#Remove samples below 1000 reads
+ps <- prune_samples(sample_sums(ASV_physeq_2) > 1000, ASV_physeq_2) #min 1000 reads for now
+ASV_physeq_2 <- ps
+
+#Remove GUD.6 as it is likely not Festuca
+ps <- subset_samples(ASV_physeq_2, !sample.code %in% c("GUD.S6", "GUD.R.6"))
+ASV_physeq_2 <- ps
+
+#Remove replicates 9 and 10, because this was a different batch and they are really weird
+temp <- subset_samples(ASV_physeq_2, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".S", 9))
+temp2 <- subset_samples(temp, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".S", 10))
+temp3 <- subset_samples(temp2, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".R.", 9))
+temp4 <- subset_samples(temp3, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".R.", 10))
+ASV_physeq_2 <- temp4
+
+#Make subsets
+physeq_rhizo_2 <- subset_samples(ASV_physeq_2, compartment=="rhizosphere")
+physeq_root_2 <- subset_samples(ASV_physeq_2, compartment=="root")
+
+#Rarefaction curves
+rarecurve(t(otu_table(physeq_rhizo_2)), step=100, col=sample_info_tab$colour, lwd=2, ylab="ASVs", label=F)
+rarecurve(t(otu_table(physeq_root_2)), step=100, col=sample_info_tab$colour, lwd=2, ylab="ASVs", label=F)
+
+#Make data frame with observed and shannon alpha div based on rarefaction
+library(metagMisc)
+set.seed(1234)
+alpha_div_ITS_rhizo <- phyloseq_mult_raref_div(physeq_rhizo_2, SampSize = min(sample_sums(physeq_rhizo_2)),
+                                               iter = 1000, divindex = c("Observed", "Shannon"), parallel = FALSE,
+                                               verbose = TRUE)
+#save(alpha_div_ITS_rhizo, file = "alpha_div_ITS_rhizo_ss1234.RDa")
+
+alpha_div_ITS_root <- phyloseq_mult_raref_div(physeq_root_2, SampSize = min(sample_sums(physeq_rhizo_2)),
+                                              iter = 1000, divindex = c("Observed", "Shannon"), parallel = FALSE,
+                                              verbose = TRUE)
+#save(alpha_div_ITS_root, file = "alpha_div_ITS_root_ss1234.RDa")
+
+#Load files
+load("alpha_div_ITS_rhizo_ss1234.RDa")
+load("alpha_div_ITS_root_ss1234.RDa")
+
+#Data frame with alpha div measures
+str(alpha_div_ITS_rhizo)
+str(alpha_div_ITS_root)
+adiv_ITS_rhizo <- spread(alpha_div_ITS_rhizo[1:3], Index, Estimate)
+adiv_ITS_root <- spread(alpha_div_ITS_root[1:3], Index, Estimate)
+head(adiv_ITS_rhizo)
+colnames(adiv_ITS_rhizo) <- c("sample.code", "Observed", "Shannon")
+colnames(adiv_ITS_root) <- c("sample.code", "Observed", "Shannon")
+temp <- sample_data(physeq_rhizo_2)
+temp2 <- sample_data(physeq_root_2)
+adiv_ITS_rhizo <- merge(adiv_ITS_rhizo, data.frame(temp)[c(1:9)], by = c("sample.code"))
+adiv_ITS_root <- merge(adiv_ITS_root, data.frame(temp2)[c(1:9)], by = c("sample.code"))
+
+#Save as seperate rhizo and root, as well as, rhizo and root together
+adiv_ITS_rhizo$compartment <- "rhizosphere"
+adiv_ITS_root$compartment <- "root"
+adiv_ITS <- rbind(adiv_ITS_rhizo, adiv_ITS_root)
+#save(adiv_ITS_rhizo, file = "adiv_ITS_rhizo_ss1234.RDa")
+#save(adiv_ITS_root, file = "adiv_ITS_root_ss1234.RDa")
+#save(adiv_ITS, file = "adiv_ITS_both_ss1234.RDa")
+
+load("adiv_ITS_both_ss1234.RDa")
+
+#Make boxplots
+head(adiv_ITS_rhizo)
+plot <- ggplot(data=adiv_ITS, aes(x=as.factor(temperature), y=Shannon, fill = as.factor(temperature)))+
+  facet_grid(compartment ~ precipitation) +
+  geom_point(size=2, aes(colour=as.factor(temperature), alpha = 0.9), position = position_dodge(width = .75)) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +
+  scale_colour_manual(values=c("#0072B2", "#E69F00", "#D55E00",   "#F0E442", "#0072B2", "#D55E00", "#CC79A7"), name="Temperature")+
+  scale_fill_manual(values=c("#0072B2", "#E69F00", "#D55E00",  "#999999", "#56B4E9", "#CC79A7"), name="Temperature")+
+  theme_bw() +
+  theme(axis.title.y=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.title.x=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.text=element_text(size=10, angle = 90, hjust = 1))+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.major = element_blank())+
+  theme(strip.text.x=element_text(size=10), strip.background=element_rect(fill="grey"))
+plot
+
+#Observed
+plot <- ggplot(data=adiv_ITS, aes(x=as.factor(temperature), y=Observed, fill = as.factor(temperature)))+
+  facet_grid(compartment ~ precipitation) +
+  geom_point(size=2, aes(colour=as.factor(temperature), alpha = 0.9), position = position_dodge(width = .75)) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +
+  scale_colour_manual(values=c("#0072B2", "#E69F00", "#D55E00",   "#F0E442", "#0072B2", "#D55E00", "#CC79A7"), name="Temperature")+
+  scale_fill_manual(values=c("#0072B2", "#E69F00", "#D55E00",  "#999999", "#56B4E9", "#CC79A7"), name="Temperature")+
+  theme_bw() +
+  theme(axis.title.y=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.title.x=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.text=element_text(size=10, angle = 90, hjust = 1))+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.major = element_blank())+
+  theme(strip.text.x=element_text(size=10), strip.background=element_rect(fill="grey"))
+plot
+
+#Add statistics
+library(nlme)
+library(car)
+library(lme4)
+
+head(adiv_ITS)
+str(adiv_ITS)
+adiv_ITS$location <- as.factor(adiv_ITS$location)
+adiv_ITS$compartment <- as.factor(adiv_ITS$compartment)
+adiv_ITS$temperature <- as.factor(adiv_ITS$temperature)
+adiv_ITS$precipitation <- as.factor(adiv_ITS$precipitation)
+
+#With random location
+m1 <- lme(log(Observed) ~ temperature * precipitation * compartment, random = ~1|location, data=adiv_ITS)
+qqnorm(resid(m1))
+plot(m1)
+Anova(m1, type = 3)
+
+m1 <- lme(Shannon ~ temperature * precipitation * compartment, random = ~1|location, data=adiv_ITS)
+qqnorm(resid(m1))
+plot(m1)
+Anova(m1, type = 3)
+
+#Emmeans
+library(emmeans)
+m1 <- lm(Shannon ~ temperature * precipitation * compartment, data=adiv_ITS) #Cannot handle random effects?
+emmeans(m1, pairwise ~ temperature | compartment * precipitation)
+
+m1 <- lm(log(Observed) ~ temperature * precipitation * compartment, data=adiv_ITS)
+emmeans(m1, pairwise ~ temperature | compartment * precipitation)
+
+
+#############################3 CALCULATE GENERALIST/SPECIALIST##################################
+#Following Chen et al. (2021) and Devictor et al. (2008)
+#Make physeq without cut off 100
+ASV_physeq_3 <- phyloseq(count_tab_phy, tax_tab_phy, sample_info_tab_phy)
+
+#Remove samples below 1000 reads
+ps <- prune_samples(sample_sums(ASV_physeq_3) > 1000, ASV_physeq_3) #min 1000 reads for now
+ASV_physeq_3 <- ps
+
+#Remove GUD.6 as it is likely not Festuca
+ps <- subset_samples(ASV_physeq_3, !sample.code %in% c("GUD.S6", "GUD.R.6"))
+ASV_physeq_3 <- ps
+
+#Remove replicates 9 and 10, because this was a different batch and they are really weird
+temp <- subset_samples(ASV_physeq_3, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".S", 9))
+temp2 <- subset_samples(temp, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".S", 10))
+temp3 <- subset_samples(temp2, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".R.", 9))
+temp4 <- subset_samples(temp3, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".R.", 10))
+ASV_physeq_3 <- temp4
+
+#Make subsets
+physeq_rhizo_3 <- subset_samples(ASV_physeq_3, compartment=="rhizosphere")
+physeq_root_3 <- subset_samples(ASV_physeq_3, compartment=="root")
+
+#Rename
+rhizo_physeq_s = physeq_rhizo_3
+root_physeq_s = physeq_root_3
+
+#Save
+asv.rhizo <- t(otu_table(rhizo_physeq_s)@.Data) #extract the otu table from phyloseq object
+tax.rhizo <- as.data.frame(tax_table(rhizo_physeq_s)@.Data)#extract the taxonomy information
+head(tax.rhizo)
+
+asv.root <- t(otu_table(root_physeq_s)@.Data) #extract the otu table from phyloseq object
+tax.root <- as.data.frame(tax_table(root_physeq_s)@.Data)#extract the taxonomy information
+head(tax.root)
+
+asv.rhizo_noprune <- otu_table(rhizo_physeq_s, taxa_are_rows=T)
+asv.root_noprune <- otu_table(root_physeq_s, taxa_are_rows=T)
+
+#Rhizo
+sub_rhizo <- rarefy_even_depth(asv.rhizo_noprune, sample.size = min(sample_sums(asv.rhizo_noprune)), rngseed = 1234)
+#save(sub_rhizo, file = "rhizo_ITS_rare_ss1234.RDa")
+
+CV_rhizo_ITS <- list()
+bias_rhizo_ITS <- list()
+for (i in 1:dim(sub_rhizo)[1]) {
+  CV_rhizo_ITS[[paste(row.names(sub_rhizo)[i])]] <- sd(sub_rhizo[i,])/mean(sub_rhizo[i,])
+  bias_rhizo_ITS[[paste(row.names(sub_rhizo)[i])]] <- sqrt(12/sum(sub_rhizo[i,]))
+}
+
+CV_rhizo_ITS
+bias_rhizo_ITS
+
+#Root
+sub_root <- rarefy_even_depth(asv.root_noprune, sample.size = min(sample_sums(asv.rhizo_noprune)), rngseed = 1234)
+#save(sub_root, file = "root_ITS_rare_ss1234.RDa")
+
+CV_root_ITS <- list()
+bias_root_ITS <- list()
+for (i in 1:dim(sub_root)[1]) {
+  CV_root_ITS[[paste(row.names(sub_root)[i])]] <- sd(sub_root[i,])/mean(sub_root[i,])
+  bias_root_ITS[[paste(row.names(sub_root)[i])]] <- sqrt(12/sum(sub_root[i,]))
+}
+
+CV_root_ITS
+bias_root_ITS
+
+#Make dataframe
+temp <- reshape2::melt(CV_rhizo_ITS)
+head(temp)
+temp2 <- reshape2::melt(bias_rhizo_ITS)
+head(temp2)
+colnames(temp) <- c("SI", "ASV")
+colnames(temp2) <- c("bias", "ASV")
+temp3 <- merge(temp, temp2, by = c("ASV"))
+temp3$SI_cor <- temp3$SI - temp3$bias
+min(temp3$SI_cor) #good, no negative values
+
+#Merge to rarefied reads
+head(sub_rhizo)
+sub_rhizo <- data.frame(sub_rhizo)
+sub_rhizo$ASV <- row.names(sub_rhizo)
+SI_rhizo_ITS <- merge(sub_rhizo, temp3, by = c("ASV"))
+SI_rhizo_ITS_ASV <- temp3
+#save(SI_rhizo_ITS_ASV, file="SI_rhizo_ITS_ASV_rare_noprune_ss1234.RDa")
+
+#Root
+temp <- reshape2::melt(CV_root_ITS)
+head(temp)
+temp2 <- reshape2::melt(bias_root_ITS)
+head(temp2)
+colnames(temp) <- c("SI", "ASV")
+colnames(temp2) <- c("bias", "ASV")
+temp3 <- merge(temp, temp2, by = c("ASV"))
+temp3$SI_cor <- temp3$SI - temp3$bias
+min(temp3$SI_cor) #good, no negative values
+
+#Merge to rarefied reads
+sub_root <- data.frame(sub_root)
+sub_root$ASV <- row.names(sub_root)
+SI_root_ITS <- merge(sub_root, temp3, by = c("ASV"))
+SI_root_ITS_ASV <- temp3
+#save(SI_root_ITS_ASV, file="SI_root_ITS_ASV_rare_noprune_ss1234.RDa")
+
+#Delete Inf and NaN
+SI_rhizo_ITS <- SI_rhizo_ITS[which(!SI_rhizo_ITS$SI=="NaN"),]
+SI_root_ITS <- SI_root_ITS[which(!SI_root_ITS$SI=="NaN"),]
+
+avg_SI_rhizo <- list()
+for (i in c(2:95)){
+  avg_SI_rhizo[paste(colnames(SI_rhizo_ITS[i]))] <- weighted.mean(SI_rhizo_ITS$SI_cor, SI_rhizo_ITS[,i], na.rm=T)
+}
+
+avg_SI_rhizo
+
+avg_SI_root <- list()
+for (i in c(2:96)){
+  avg_SI_root[paste(colnames(SI_root_ITS[i]))] <- weighted.mean(SI_root_ITS$SI_cor, SI_root_ITS[,i], na.rm=T)
+}
+
+avg_SI_root
+
+#Merge
+temp <- reshape2::melt(avg_SI_rhizo)
+temp2 <- reshape2::melt(avg_SI_root)
+colnames(temp) <- c("avgSI", "sample.code")
+colnames(temp2) <- c("avgSI", "sample.code")
+temp$compartment <- "rhizosphere"
+temp2$compartment <- "root"
+temp3 <- sample_data(rhizo_physeq_s)
+temp4 <- sample_data(root_physeq_s)
+temp3$avgSI <- NULL
+temp4$avgSI <- NULL
+SI_ITS_rhizo <- merge(temp, data.frame(temp3)[c(1:9)], by = c("sample.code", "compartment"))
+SI_ITS_root <- merge(temp2, data.frame(temp4)[c(1:9)], by = c("sample.code", "compartment"))
+SI_ITS <- rbind(SI_ITS_rhizo, SI_ITS_root)
+#save(SI_ITS_rhizo, file = "SI_ITS_rhizo_rare_noprune_ss1234.RDa")
+#save(SI_ITS_root, file = "SI_ITS_root_rare_noprune_ss1234.RDa")
+#save(SI_ITS, file = "SI_ITS_both_rare_noprune_ss1234.RDa")
+
+load("SI_ITS_both_rare_noprune_ss1234.RDa")
+
+#Make boxplots
+head(SI_ITS)
+plot <- ggplot(data=SI_ITS, aes(x=as.factor(temperature), y=avgSI, fill = as.factor(temperature)))+
+  facet_grid(compartment ~ precipitation) +
+  geom_point(size=2, aes(colour=as.factor(temperature), alpha = 0.9), position = position_dodge(width = .75)) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +
+  scale_colour_manual(values=c("#0072B2", "#E69F00", "#D55E00",   "#F0E442", "#0072B2", "#D55E00", "#CC79A7"), name="Temperature")+
+  scale_fill_manual(values=c("#0072B2", "#E69F00", "#D55E00",  "#999999", "#56B4E9", "#CC79A7"), name="Temperature")+
+  theme_bw() +
+  theme(axis.title.y=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.title.x=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.text=element_text(size=10, angle = 90, hjust = 1))+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.major = element_blank())+
+  theme(strip.text.x=element_text(size=10), strip.background=element_rect(fill="grey"))
+plot
+
+#Statistics
+str(SI_ITS)
+SI_ITS$location <- as.factor(SI_ITS$location)
+SI_ITS$compartment <- as.factor(SI_ITS$compartment)
+SI_ITS$temperature <- as.factor(SI_ITS$temperature)
+SI_ITS$precipitation <- as.factor(SI_ITS$precipitation)
+
+#With random location
+m1 <- lme(log(avgSI) ~ temperature * precipitation * compartment, random = ~1|location, data=SI_ITS)
+qqnorm(resid(m1))
+plot(m1)
+Anova(m1, type = 3)
+
+#Emmeans
+library(emmeans)
+m1 <- lm(log(avgSI) ~ temperature * precipitation * compartment, data=SI_ITS) #Cannot handle random effects
+emmeans(m1, pairwise ~ temperature | precipitation * compartment)

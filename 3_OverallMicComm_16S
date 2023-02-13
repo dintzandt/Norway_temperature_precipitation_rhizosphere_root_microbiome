@@ -412,57 +412,207 @@ library(nlme)
 library(car)
 library(lme4)
 
-#Rhizosphere
-head(adiv_16S_rhizo)
-str(adiv_16S_rhizo)
-adiv_16S_rhizo$location <- as.factor(adiv_16S_rhizo$location)
-adiv_16S_rhizo$compartment <- as.factor(adiv_16S_rhizo$compartment)
-adiv_16S_rhizo$temperature <- as.factor(adiv_16S_rhizo$temperature)
-adiv_16S_rhizo$precipitation <- as.factor(adiv_16S_rhizo$precipitation)
+head(adiv_16S)
+str(adiv_16S)
+adiv_16S$location <- as.factor(adiv_16S$location)
+adiv_16S$compartment <- as.factor(adiv_16S$compartment)
+adiv_16S$temperature <- as.factor(adiv_16S$temperature)
+adiv_16S$precipitation <- as.factor(adiv_16S$precipitation)
 
 #With random location
-m1 <- lme(log(Observed) ~ temperature * precipitation, random = ~1|location, data=adiv_16S_rhizo)
+m1 <- lme(log(Observed) ~ temperature * precipitation * compartment, random = ~1|location, data=adiv_16S)
 qqnorm(resid(m1))
 plot(m1)
 Anova(m1, type = 3)
 
-m1 <- lme(Shannon ~ temperature * precipitation, random = ~1|location, data=adiv_16S_rhizo)
+m1 <- lme(Shannon ~ temperature * precipitation * compartment, random = ~1|location, data=adiv_16S)
 qqnorm(resid(m1))
 plot(m1)
 Anova(m1, type = 3)
 
 #Emmeans
 library(emmeans)
-m1 <- lm(Shannon ~ temperature * precipitation, data=adiv_16S_rhizo) #Cannot handle random effects
-emmeans(m1, pairwise ~ temperature | precipitation)
+m1 <- lm(Shannon ~ temperature * precipitation * compartment, data=adiv_16S) #Cannot handle random effects?
+emmeans(m1, pairwise ~ temperature | compartment * precipitation)
 
-m1 <- lm(log(Observed) ~ temperature * precipitation, data=adiv_16S_rhizo)
-emmeans(m1, pairwise ~ temperature | precipitation)
+m1 <- lm(log(Observed) ~ temperature * precipitation * compartment, data=adiv_16S)
+emmeans(m1, pairwise ~ temperature | compartment * precipitation)
+
+
+#############################3 CALCULATE GENERALIST/SPECIALIST##################################
+#Following Chen et al. (2021) and Devictor et al. (2008)
+#Make physeq without cut off 100
+ASV_physeq_3 <- phyloseq(count_tab_phy, tax_tab_phy, sample_info_tab_phy)
+
+#Remove samples below 1000 reads
+ps <- prune_samples(sample_sums(ASV_physeq_3) > 1000, ASV_physeq_3) #min 1000 reads for now
+ASV_physeq_3 <- ps
+
+#Remove GUD.6 as it is likely not Festuca and VIK.R.8 outlier
+ps <- subset_samples(ASV_physeq_3, !sample.code %in% c("GUD.S6", "GUD.R.6", "VIK.R.8"))
+ASV_physeq_3 <- ps
+
+#Remove replicates 9 and 10, because this was a different batch and they are really weird
+temp <- subset_samples(ASV_physeq_3, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".S", 9))
+temp2 <- subset_samples(temp, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".S", 10))
+temp3 <- subset_samples(temp2, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".R.", 9))
+temp4 <- subset_samples(temp3, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".R.", 10))
+ASV_physeq_3 <- temp4
+
+#Make subsets
+physeq_rhizo_3 <- subset_samples(ASV_physeq_3, compartment=="rhizosphere")
+physeq_root_3 <- subset_samples(ASV_physeq_3, compartment=="root")
+
+#Rename
+rhizo_physeq_s = physeq_rhizo_3
+root_physeq_s = physeq_root_3
+
+#Save
+asv.rhizo <- t(otu_table(rhizo_physeq_s)@.Data) #extract the otu table from phyloseq object
+tax.rhizo <- as.data.frame(tax_table(rhizo_physeq_s)@.Data)#extract the taxonomy information
+head(tax.rhizo)
+
+asv.root <- t(otu_table(root_physeq_s)@.Data) #extract the otu table from phyloseq object
+tax.root <- as.data.frame(tax_table(root_physeq_s)@.Data)#extract the taxonomy information
+head(tax.root)
+
+asv.rhizo_noprune <- otu_table(rhizo_physeq_s, taxa_are_rows=T)
+asv.root_noprune <- otu_table(root_physeq_s, taxa_are_rows=T)
+
+#Rhizo
+sub_rhizo <- rarefy_even_depth(asv.rhizo_noprune, sample.size = min(sample_sums(asv.root_noprune)), rngseed = 1234)
+#save(sub_rhizo, file = "rhizo_16S_rare_ss1234.RDa")
+
+CV_rhizo_16S <- list()
+bias_rhizo_16S <- list()
+for (i in 1:dim(sub_rhizo)[1]) {
+  CV_rhizo_16S[[paste(row.names(sub_rhizo)[i])]] <- sd(sub_rhizo[i,])/mean(sub_rhizo[i,])
+  bias_rhizo_16S[[paste(row.names(sub_rhizo)[i])]] <- sqrt(12/sum(sub_rhizo[i,]))
+}
+
+CV_rhizo_16S
+bias_rhizo_16S
 
 #Root
-head(adiv_16S_root)
-str(adiv_16S_root)
-adiv_16S_root$location <- as.factor(adiv_16S_root$location)
-adiv_16S_root$compartment <- as.factor(adiv_16S_root$compartment)
-adiv_16S_root$temperature <- as.factor(adiv_16S_root$temperature)
-adiv_16S_root$precipitation <- as.factor(adiv_16S_root$precipitation)
+sub_root <- rarefy_even_depth(asv.root_noprune, sample.size = min(sample_sums(asv.root_noprune)), rngseed = 1234)
+#save(sub_root, file = "root_16S_rare_ss1234.RDa")
+
+CV_root_16S <- list()
+bias_root_16S <- list()
+for (i in 1:dim(sub_root)[1]) {
+  CV_root_16S[[paste(row.names(sub_root)[i])]] <- sd(sub_root[i,])/mean(sub_root[i,])
+  bias_root_16S[[paste(row.names(sub_root)[i])]] <- sqrt(12/sum(sub_root[i,]))
+}
+
+CV_root_16S
+bias_root_16S
+
+#Make dataframe
+temp <- reshape2::melt(CV_rhizo_16S)
+head(temp)
+temp2 <- reshape2::melt(bias_rhizo_16S)
+head(temp2)
+colnames(temp) <- c("SI", "ASV")
+colnames(temp2) <- c("bias", "ASV")
+temp3 <- merge(temp, temp2, by = c("ASV"))
+temp3$SI_cor <- temp3$SI - temp3$bias
+min(temp3$SI_cor) #good, no negative values
+
+#Merge to rarefied reads
+sub_rhizo <- data.frame(sub_rhizo)
+sub_rhizo$ASV <- row.names(sub_rhizo)
+SI_rhizo_16S <- merge(sub_rhizo, temp3, by = c("ASV"))
+SI_rhizo_16S_ASV <- temp3
+#save(SI_rhizo_16S_ASV, file="SI_rhizo_16S_ASV_rare_noprune_ss1234.RDa")
+
+#Root
+temp <- reshape2::melt(CV_root_16S)
+head(temp)
+temp2 <- reshape2::melt(bias_root_16S)
+head(temp2)
+colnames(temp) <- c("SI", "ASV")
+colnames(temp2) <- c("bias", "ASV")
+temp3 <- merge(temp, temp2, by = c("ASV"))
+temp3$SI_cor <- temp3$SI - temp3$bias
+min(temp3$SI_cor) #good, no negative values
+
+#Merge to rarefied reads
+sub_root <- data.frame(sub_root)
+sub_root$ASV <- row.names(sub_root)
+SI_root_16S <- merge(sub_root, temp3, by = c("ASV"))
+SI_root_16S_ASV <- temp3
+#save(SI_root_16S_ASV, file="SI_root_16S_ASV_rare_noprune_ss1234.RDa")
+
+#Calculate community weighted mean SI per sample
+#Delete Inf and NaN
+SI_rhizo_16S <- SI_rhizo_16S[which(!SI_rhizo_16S$SI=="NaN"),]
+SI_root_16S <- SI_root_16S[which(!SI_root_16S$SI=="NaN"),]
+
+avg_SI_rhizo <- list()
+for (i in c(2:96)){
+  avg_SI_rhizo[paste(colnames(SI_rhizo_16S[i]))] <- weighted.mean(SI_rhizo_16S$SI_cor, SI_rhizo_16S[,i], na.rm=T)
+}
+
+avg_SI_rhizo
+
+avg_SI_root <- list()
+for (i in c(2:95)){
+  avg_SI_root[paste(colnames(SI_root_16S[i]))] <- weighted.mean(SI_root_16S$SI_cor, SI_root_16S[,i], na.rm=T)
+}
+
+avg_SI_root 
+
+#Merge
+temp <- reshape2::melt(avg_SI_rhizo)
+temp2 <- reshape2::melt(avg_SI_root)
+colnames(temp) <- c("avgSI", "sample.code")
+colnames(temp2) <- c("avgSI", "sample.code")
+temp$compartment <- "rhizosphere"
+temp2$compartment <- "root"
+temp3 <- sample_data(rhizo_physeq_s)
+temp4 <- sample_data(root_physeq_s)
+temp3$avgSI <- NULL
+temp4$avgSI <- NULL
+SI_16S_rhizo <- merge(temp, data.frame(temp3)[c(1:9)], by = c("sample.code", "compartment"))
+SI_16S_root <- merge(temp2, data.frame(temp4)[c(1:9)], by = c("sample.code", "compartment"))
+SI_16S <- rbind(SI_16S_rhizo, SI_16S_root)
+save(SI_16S_rhizo, file = "SI_16S_rhizo_rare_noprune_ss1234_2.RDa")
+save(SI_16S_root, file = "SI_16S_root_rare_noprune_ss1234_2.RDa")
+save(SI_16S, file = "SI_16S_both_rare_noprune_ss1234_2.RDa")
+
+#Make boxplots
+load("SI_16S_both_rare_noprune_ss1234_2.RDa")
+head(SI_16S)
+
+plot <- ggplot(data=SI_16S, aes(x=as.factor(temperature), y=avgSI, fill = as.factor(temperature)))+
+  facet_grid(compartment ~ precipitation) +
+  geom_point(size=2, aes(colour=as.factor(temperature), alpha = 0.9), position = position_dodge(width = .75)) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +
+  scale_colour_manual(values=c("#0072B2", "#E69F00", "#D55E00",   "#F0E442", "#0072B2", "#D55E00", "#CC79A7"), name="Temperature")+
+  scale_fill_manual(values=c("#0072B2", "#E69F00", "#D55E00",  "#999999", "#56B4E9", "#CC79A7"), name="Temperature")+
+  theme_bw() +
+  theme(axis.title.y=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.title.x=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.text=element_text(size=10, angle = 90, hjust = 1))+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.major = element_blank())+
+  theme(strip.text.x=element_text(size=10), strip.background=element_rect(fill="grey"))
+plot
+
+#Statistics
+str(SI_16S)
+SI_16S$location <- as.factor(SI_16S$location)
+SI_16S$compartment <- as.factor(SI_16S$compartment)
+SI_16S$temperature <- as.factor(SI_16S$temperature)
+SI_16S$precipitation <- as.factor(SI_16S$precipitation)
 
 #With random location
-m1 <- lme(log(Observed) ~ temperature * precipitation, random = ~1|location, data=adiv_16S_root)
-qqnorm(resid(m1))
-plot(m1)
-Anova(m1, type = 3)
-
-m1 <- lme(Shannon ~ temperature * precipitation, random = ~1|location, data=adiv_16S_root)
+m1 <- lme(log(avgSI) ~ temperature * precipitation * compartment, random = ~1|location, data=SI_16S)
 qqnorm(resid(m1))
 plot(m1)
 Anova(m1, type = 3)
 
 #Emmeans
 library(emmeans)
-m1 <- lm(Shannon ~ temperature * precipitation, data=adiv_16S_root) #Cannot handle random effects
-emmeans(m1, pairwise ~ temperature | precipitation)
-
-m1 <- lm(log(Observed) ~ temperature * precipitation, data=adiv_16S_root)
-emmeans(m1, pairwise ~ temperature | precipitation)
-
+m1 <- lm(log(avgSI) ~ temperature * precipitation * compartment, data=SI_16S) #Cannot handle random effects
+emmeans(m1, pairwise ~ temperature | precipitation * compartment)

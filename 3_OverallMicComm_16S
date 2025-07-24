@@ -20,7 +20,7 @@ count_tab <- read.table("ASVs_counts_nohit_nochloro_nomito_nocontam_16S_blk1cont
 tax_tab <- as.matrix(read.table("ASVs_taxonomy_nohit_nochloro_nomito_nocontam_16S_blk1contam.tsv", header=T, row.names=1, sep="\t"))
 sample_info_tab <- read.table("sample_info_both.txt", sep="\t",header=T)
 soil_chem <- read.table("soil_chemistry_both.txt", sep="\t",header=T)
-load("Climate.Rda")
+load("Climate2.0.Rda")
 colnames(Climate)
 load("Mveg_2019.RDa")
 colnames(Mveg)

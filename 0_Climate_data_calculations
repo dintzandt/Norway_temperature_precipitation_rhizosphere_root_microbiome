@@ -1,0 +1,1147 @@
+rm(list=ls())
+getwd()
+setwd("D:/Prague/4. Norway/dataNorway/SoilMoisture") #PC
+
+library(tidyverse)
+library(stringr)
+library(zoo)
+library(lubridate)
+library(cowplot)
+library(plyr)
+library(openair)
+library(raster)
+
+#Read in data
+dataSM <- read.csv(file = 'SoilMoisture.csv')
+str(dataSM)
+head(dataSM)
+tail(dataSM)
+
+#Remove head and tail: rows 1:5 (head), last row (tail)
+dataSM <- dataSM[-c(1:5, 2277616),]
+
+#Simplify so can more easily be used in other scripts
+#Date needs to be in dd/mm/yyyy format
+#str(dataSM)
+dataSM$date <- ymd_hms(dataSM$date, tz = "Europe/Paris")
+#d <- str_split_fixed(dataSM$date, n=2, " ")[,1]
+#dataSM$Date <- format(as.Date(d),'%d/%m/%Y')
+#dataSM$Time <- str_split_fixed(dataSM$date, n=2, " ")[,2]
+#Somehow midnight is changed to 0S, but doesn't matter at the moment anyway
+#head(dataSM) #Issues with date order solved
+
+#Are there two sensors per location?
+str(dataSM)
+dataSM$siteID <- as.factor(dataSM$siteID)
+dataSM$logger <- as.factor(dataSM$logger)
+levels(dataSM$siteID)
+levels(dataSM$logger)
+
+#########################################SM 2020 CALCULATIONS################################
+#Subset for 2020
+dataSM_2020 <- dataSM[dataSM$date >=  "2020-01-01" & dataSM$date <= "2020-07-15",]
+head(dataSM_2020)
+str(dataSM_2020)
+
+dataSM_2020 %>% 
+  filter(logger == "soil.moisture1") %>% 
+  ggplot(aes(x = date, y = value)) +
+  geom_line() +
+  facet_wrap(~ siteID)
+
+dataSM_2020 %>% 
+  filter(logger == "soil.moisture2") %>% 
+  ggplot(aes(x = date, y = value)) +
+  geom_line() +
+  facet_wrap(~ siteID)
+
+#### Calculate daily means, min, max and sd ####
+detach(package:plyr)
+threshold <-  0  # no threshold set
+dailySM <- dataSM_2020 %>%
+  filter(!is.na(value)) %>%
+  mutate(date = dmy(paste0(format(date, "%d.%m.%Y")))) %>%
+  group_by(date, logger, siteID) %>%
+  summarise(mean = mean(value, na.rm=TRUE), min = min(value, na.rm=TRUE), max = max(value, na.rm=TRUE), cv = cv(value, na.rm=TRUE),
+            dif = abs(max(value, na.rm=TRUE) - min(value, na.rm=TRUE)))
+dailySM
+
+#Average the two soil moisture sensors
+dailySM_avg <- dailySM %>%
+  group_by(date, siteID) %>%
+  summarise(mean = mean(mean), min = mean(min), max = mean(max), cv = mean(cv), dif = mean(dif))
+dailySM_avg
+
+#Plot
+dailySM_avg %>% 
+  ggplot(aes(x = date, y = dif, colour = siteID)) +
+  geom_line(size = 1) +
+  facet_wrap(~ siteID)
+#Mmmm so many sites are missing
+
+#Lets just calculate the same averages as for Temp
+#Calculate mean temperature from January until end of March (first defrosting is in beginning of April)
+dailySMwinter <- dailySM_avg[dailySM_avg$date >=  "2020-01-01" & dailySM_avg$date <= "2020-04-01",]
+avgSMwinter <- dailySMwinter %>%
+  group_by(siteID) %>%
+  summarise(meanSMwinter = mean(mean, na.rm=TRUE), minSMwinter = mean(min, na.rm=TRUE), maxSMwinter = mean(max, na.rm=TRUE), 
+            cvSMwinter_within = mean(cv, na.rm=TRUE), cvSMwinter_between = cv(mean, na.rm=TRUE), difSMwinter = mean(dif, na.rm=TRUE))
+avgSMwinter
+#save(avgSMwinter, file = "avgSMwinter.Rda")
+
+#Calculate mean temperatures 1-07 until 15-07
+dailySMJuly <- dailySM_avg[dailySM_avg$date >=  "2020-07-01" & dailySM_avg$date <= "2020-07-15",]
+avgSMJuly <- dailySMJuly %>%
+  group_by(siteID) %>%
+  summarise(meanSMJuly = mean(mean, na.rm=TRUE), minSMJuly = mean(min, na.rm=TRUE), maxSMJuly = mean(max, na.rm=TRUE), 
+            cvSMJuly_within = mean(cv, na.rm=TRUE), cvSMJuly_between = cv(mean, na.rm=TRUE), difSMJuly = mean(dif, na.rm=TRUE))
+avgSMJuly
+#save(avgSMJuly, file = "avgSMJuly.Rda")
+
+#Calculate mean temperatures for month June
+dailySMJune <- dailySM_avg[dailySM_avg$date >=  "2020-06-01" & dailySM_avg$date <= "2020-07-01",]
+avgSMJune <- dailySMJune %>%
+  group_by(siteID) %>%
+  summarise(meanSMJune = mean(mean, na.rm=TRUE), minSMJune = mean(min, na.rm=TRUE), maxSMJune = mean(max, na.rm=TRUE), 
+            cvSMJune_within = mean(cv, na.rm=TRUE), cvSMJune_between = cv(mean, na.rm=TRUE), difSMJune = mean(dif, na.rm=TRUE))
+avgSMJune
+#save(avgSMJune, file = "avgSMJune.Rda")
+
+#Calculate mean SM for 15-06 until 15-07 (month before sampling)
+dailySMbefore <- dailySM_avg[dailySM_avg$date >=  "2020-06-15" & dailySM_avg$date <= "2020-07-15",]
+avgSMbefore <- dailySMbefore %>%
+  group_by(siteID) %>%
+  summarise(meanSMmbefore = mean(mean, na.rm=TRUE), minSMmbefore = mean(min, na.rm=TRUE), maxSMmbefore = mean(max, na.rm=TRUE), 
+            cvSMmbefore_within = mean(cv, na.rm=TRUE), cvSMmbefore_between = cv(mean, na.rm=TRUE), difSMmbefore = mean(dif, na.rm=TRUE))
+avgSMbefore
+#save(avgSMbefore, file = "avgSMbefore.Rda")
+
+
+#############################################12 year annual mean CALCULATIONS##################################################
+#12 year mean SM
+#Subset
+head(dataSM$date)
+dataSM_12yr <- dataSM[dataSM$date >=  "2009-07-15" & dataSM$date <= "2020-07-15",]
+head(dataSM_12yr)
+str(dataSM_12yr)
+
+dataSM_12yr %>% 
+  filter(logger == "soil.moisture1") %>% 
+  ggplot(aes(x = date, y = value)) +
+  geom_line() +
+  facet_wrap(~ siteID)
+
+dataSM_12yr %>% 
+  filter(logger == "soil.moisture2") %>% 
+  ggplot(aes(x = date, y = value)) +
+  geom_line() +
+  facet_wrap(~ siteID)
+
+#### Calculate daily means, min, max and cv ####
+threshold <-  0  # no threshold set
+detach(package:plyr)
+dailySM <- dataSM_12yr %>%
+  filter(!is.na(value)) %>%
+  mutate(date = dmy(paste0(format(date, "%d.%m.%Y")))) %>%
+  group_by(date, logger, siteID) %>%
+  summarise(mean = mean(value, na.rm=TRUE), min = min(value, na.rm=TRUE), max = max(value, na.rm=TRUE), cv = cv(value, na.rm=TRUE),
+            dif = abs(max(value, na.rm=TRUE) - min(value, na.rm=TRUE)))
+dailySM
+
+#Plot df per soil moisture sensor
+dailySM %>% 
+  filter(logger == "soil.moisture1") %>% 
+  ggplot(aes(x = date, y = dif, colour = siteID)) +
+  geom_line(size = 1) +
+  geom_smooth(method = "gam") +
+  facet_wrap(~ siteID)
+
+dailySM %>% 
+  filter(logger == "soil.moisture2") %>% 
+  ggplot(aes(x = date, y = dif, colour = siteID)) +
+  geom_line(size = 1) +
+  geom_smooth(method = "gam") +
+  facet_wrap(~ siteID)
+
+#Average the two soil moisture sensors
+dailySM_avg <- dailySM %>%
+  group_by(date, siteID) %>%
+  summarise(mean = mean(mean), min = mean(min), max = mean(max), cv = mean(cv), dif = mean(dif))
+dailySM_avg
+
+#Plot
+dailySM_avg %>% 
+  ggplot(aes(x = date, y = mean, colour = siteID)) +
+  geom_line(size = 1) +
+  geom_smooth(method = "gam") +
+  facet_wrap(~ siteID)
+
+#Calculate mean per year
+head(dailySM_avg)
+#View(dailySM_avg)
+dailySM_avg$year <- factor(str_split_fixed(dailySM_avg$date, n=3, "-")[,1])
+threshold <- 180 #days in the year
+avgSM_peryear <- dailySM_avg %>%
+  group_by(siteID, year) %>%
+  summarise(n = n(), mean_year = mean(mean, na.rm=TRUE), min_year = mean(min, na.rm=TRUE), max_year = mean(max, na.rm=TRUE), 
+            cv_within = mean(cv, na.rm=TRUE), cv_between = cv(mean, na.rm=TRUE), dif = mean(dif, na.rm=TRUE)) %>%
+  filter(n > threshold)
+avgSM_peryear
+
+#Plot
+avgSM_peryear %>% 
+  ggplot(aes(x = as.numeric(year), y = dif, colour = siteID)) +
+  geom_point(size = 4) +
+  geom_line(size=1) +
+  geom_smooth(method = "gam") +
+  facet_wrap(~ siteID)
+
+#Calculate 12 year annual mean and mean of min, max and cv SM
+avgSM_12yr <- avgSM_peryear %>%
+  group_by(siteID) %>%
+  summarise(meanSM_12yr = mean(mean_year, na.rm=TRUE), minSM_12yr = mean(min_year, na.rm=TRUE), maxSM_12yr = mean(max_year, na.rm=TRUE), 
+            cvSM_12yr_within = mean(cv_within, na.rm=TRUE), cvSM_12yr_between = mean(cv_between, na.rm=TRUE), difSM_12yr = mean(dif, na.rm=TRUE))
+avgSM_12yr
+
+#Plot trend
+dailySM_avg %>% 
+  ggplot(aes(x = date, y = mean, colour = siteID)) +
+  geom_point(size = 1) +
+  geom_smooth(method = "lm", colour="black") +
+  facet_wrap(~ siteID)
+
+#Calculate trend of linear line
+library(QuantPsyc)
+beta <- list()
+for (i in levels(dailySM_avg$siteID)) {
+  sub <- dailySM_avg[which(dailySM_avg$siteID == i),]
+  m <- lm(mean ~ date, data = sub)
+  beta[[paste(i)]] <- lm.beta(m)
+  
+}
+
+library(reshape2)
+betaSM <- melt(beta)
+colnames(betaSM) <- c("betaSM_12yr", "siteID")
+
+#Merge with avg 12yr data
+avgSM_12yr <- merge(avgSM_12yr, betaSM, by = c("siteID"))
+#save(avgSM_12yr, file = "avgSM_12yr.Rda")
+
+#Same but for the winter and summer separated
+#Summer: May until October
+#Winter: November until April
+dailySM_avg$month <- str_split_fixed(dailySM_avg$date, n = 3, "-")[,2]
+dailySMwinter <- dailySM_avg[dailySM_avg$month %in% c(11, 12, 01, 02, 03, 04),]
+dailySMsummer <- dailySM_avg[dailySM_avg$month %in% c(05, 06, 07, 08, 09, 10),]
+
+avgSMwinter_peryear <- dailySMwinter %>%
+  group_by(siteID, year) %>%
+  summarise(mean_year = mean(mean, na.rm=TRUE), min_year = mean(min, na.rm=TRUE), max_year = mean(max, na.rm=TRUE), 
+            cv_within = mean(cv, na.rm=TRUE), cv_between = cv(mean, na.rm=TRUE), dif = mean(dif, na.rm=TRUE))
+avgSMwinter_peryear
+
+avgSMwinter_12yr <- avgSMwinter_peryear %>%
+  group_by(siteID) %>%
+  summarise(meanSMwinter_12yr = mean(mean_year, na.rm=TRUE), minSMwinter_12yr = mean(min_year, na.rm=TRUE), maxSMwinter_12yr = mean(max_year, na.rm=TRUE), 
+            cvSMwinter_12yr_within = mean(cv_within, na.rm=TRUE), cvSMwinter_12yr_between = mean(cv_between, na.rm=TRUE),
+            difSMwinter_12yr = mean(dif, na.rm=TRUE))
+avgSMwinter_12yr
+
+#Plot trend
+dailySMwinter %>% 
+  ggplot(aes(x = date, y = mean, colour = siteID)) +
+  geom_point(size = 1) +
+  geom_smooth(method = "lm", colour="black") +
+  facet_wrap(~ siteID)
+
+#Calculate trend of linear line
+library(QuantPsyc)
+beta <- list()
+for (i in levels(dailySMwinter$siteID)) {
+  sub <- dailySMwinter[which(dailySMwinter$siteID == i),]
+  m <- lm(mean ~ date, data = sub)
+  beta[[paste(i)]] <- lm.beta(m)
+  
+}
+
+library(reshape2)
+betaSMwinter <- melt(beta)
+colnames(betaSMwinter) <- c("betaSMwinter_12yr", "siteID")
+
+#Merge with avg 12yr data
+avgSMwinter_12yr <- merge(avgSMwinter_12yr, betaSMwinter, by = c("siteID"))
+#save(avgSMwinter_12yr, file = "avgSMwinter_12yr.Rda")
+
+avgSMsummer_peryear <- dailySMsummer %>%
+  group_by(siteID, year) %>%
+  summarise(mean_year = mean(mean, na.rm=TRUE), min_year = mean(min, na.rm=TRUE), max_year = mean(max, na.rm=TRUE), 
+            cv_within = mean(cv, na.rm=TRUE), cv_between = cv(mean, na.rm=TRUE), dif = mean(dif, na.rm=TRUE))
+avgSMsummer_peryear
+
+avgSMsummer_12yr <- avgSMsummer_peryear %>%
+  group_by(siteID) %>%
+  summarise(meanSMsummer_12yr = mean(mean_year, na.rm=TRUE), minSMsummer_12yr = mean(min_year, na.rm=TRUE), maxSMsummer_12yr = mean(max_year, na.rm=TRUE), 
+            cvSMsummer_12yr_within = mean(cv_within, na.rm=TRUE), cvSMsummer_12yr_between = mean(cv_between, na.rm=TRUE),
+            difSMsummer_12yr = mean(dif, na.rm=TRUE))
+avgSMsummer_12yr
+
+#Plot trend
+dailySMsummer %>% 
+  ggplot(aes(x = date, y = mean, colour = siteID)) +
+  geom_point(size = 1) +
+  geom_smooth(method = "lm", colour="black") +
+  facet_wrap(~ siteID)
+
+#Calculate trend of linear line
+library(QuantPsyc)
+beta <- list()
+for (i in levels(dailySMsummer$siteID)) {
+  sub <- dailySMsummer[which(dailySMsummer$siteID == i),]
+  m <- lm(mean ~ date, data = sub)
+  beta[[paste(i)]] <- lm.beta(m)
+  
+}
+
+library(reshape2)
+betaSMsummer <- melt(beta)
+colnames(betaSMsummer) <- c("betaSMsummer_12yr", "siteID")
+
+#Merge with avg 12yr data
+avgSMsummer_12yr <- merge(avgSMsummer_12yr, betaSMsummer, by = c("siteID"))
+#save(avgSMsummer_12yr, file = "avgSMsummer_12yr.Rda")
+
+########################################CHECKING DAY-NIGHT CYCLES SM################################################
+#####Figure on daily-night cycle#####
+#12 year mean SM
+head(dataSM_12yr)
+dataSM_12yr$year <- str_split_fixed(dataSM_12yr$date, n = 3, "-")[,1]
+dataSM_12yr$hour <- str_sub(str_split_fixed(dataSM_12yr$date, n = 3, " ")[,2], 1,2)
+dataSM_12yr$month <- str_split_fixed(dataSM_12yr$date, n = 3, "-")[,2]
+
+####Calculate mean per hour per year####
+detach(package:plyr)
+hourlySM_peryear <- dataSM_12yr %>%
+  group_by(year, hour, logger, siteID) %>%
+  summarise(n = n(), mean = mean(value, na.rm=TRUE))
+  
+hourlySM_peryear
+
+#Plot
+str(hourlySM_peryear_avg)
+hourlySM_peryear$hour <- as.numeric(hourlySM_peryear$hour)
+hourlySM_peryear%>% 
+  filter(logger == "soil.moisture1") %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_smooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+hourlySM_peryear%>% 
+  filter(logger == "soil.moisture2") %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_smooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+#Have to take some years out where there where sensors failed or no fully covered profile
+#For soil.moisture1, take out: Fauske 2016, Rambera 2013, Veskre 2012 + 2013, Lavisdalen 2013
+hourlySM_peryear$mean[hourlySM_peryear$logger == "soil.moisture1" & hourlySM_peryear$siteID == "Fauske" & hourlySM_peryear$year == "2016"] <- NA
+hourlySM_peryear$mean[hourlySM_peryear$logger == "soil.moisture1" & hourlySM_peryear$siteID == "Rambera" & hourlySM_peryear$year == "2013"] <- NA
+hourlySM_peryear$mean[hourlySM_peryear$logger == "soil.moisture1" & hourlySM_peryear$siteID == "Veskre" & hourlySM_peryear$year %in% c("2012", "2013")] <- NA
+hourlySM_peryear$mean[hourlySM_peryear$logger == "soil.moisture1" & hourlySM_peryear$siteID == "Lavisdalen" & hourlySM_peryear$year %in% c("2013")] <- NA
+
+#For soil.moisture2, take out: Fauske 2016, Rambera 2013
+hourlySM_peryear$mean[hourlySM_peryear$logger == "soil.moisture2" & hourlySM_peryear$siteID == "Fauske" & hourlySM_peryear$year == "2016"] <- NA
+hourlySM_peryear$mean[hourlySM_peryear$logger == "soil.moisture2" & hourlySM_peryear$siteID == "Rambera" & hourlySM_peryear$year == "2013"] <- NA
+
+#Average the two soil moisture sensors
+hourlySM_peryear_avg <- hourlySM_peryear %>%
+  group_by(year, hour, siteID) %>%
+  summarise(mean = mean(mean, na.rm=TRUE))
+hourlySM_peryear_avg
+
+#Plot
+str(hourlySM_peryear_avg)
+hourlySM_peryear_avg$hour <- as.numeric(hourlySM_peryear_avg$hour)
+hourlySM_peryear_avg %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_smooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+#Average per year
+threshold <- 0
+hourlySM <- hourlySM_peryear_avg %>%
+  group_by(hour, siteID) %>%
+  summarise(n = n(), mean = mean(mean, na.rm=TRUE)) %>%
+  filter(n > threshold)
+hourlySM
+
+#Plot
+str(hourlySM_peryear_avg)
+hourlySM_peryear_avg$hour <- as.numeric(hourlySM_peryear_avg$hour)
+plot <- hourlySM %>% 
+  ggplot(aes(x = hour, y = mean, colour = siteID)) +
+  geom_point(size = 2) +
+  #geom_line(size = 1) +
+  #scale_y_continuous(limits = c(mean+0.3, mean-0.3)) +
+  geom_smooth(method = "gam") +
+  facet_wrap(~ siteID, scale = "free")
+plot
+
+#Nicer plot for presentation
+head(hourlySM)
+
+correction_factor <- hourlySM %>%
+  group_by(siteID) %>%
+  summarise(corr = mean(mean, na.rm=TRUE))
+
+test <- merge(hourlySM, correction_factor, by = c("siteID"))
+test$mean_corr <- test$mean - test$corr
+
+#Add temperature and precipitation
+library(plyr)
+test$location <- mapvalues(test$siteID, from = c("Skjelingahaugen", "Gudmedalen", "Lavisdalen", "Ulvehaugen", "Veskre", "Rambera", "Hogsete", "Alrust", "Ovstedalen", "Arhelleren", "Vikesland", "Fauske"), 
+                              to = c("SKJ", "GUD", "LAV", "ULV", "VES", "RAM", "HOG", "ALR", "OVS", "ARH", "VIK", "FAU"))
+test$T.grid <- mapvalues(test$siteID, from = c("Skjelingahaugen", "Gudmedalen", "Lavisdalen", "Ulvehaugen", "Veskre", "Rambera", "Hogsete", "Alrust", "Ovstedalen", "Arhelleren", "Vikesland", "Fauske"), 
+                            to = c(6.57624, 5.86638, 6.45452, 6.16848, 8.66692, 8.76748, 9.16749, 9.13926, 10.7775, 10.5975, 10.5541, 10.3))
+test$P.grid <- mapvalues(test$siteID, from = c("Skjelingahaugen", "Gudmedalen", "Lavisdalen", "Ulvehaugen", "Veskre", "Rambera", "Hogsete", "Alrust", "Ovstedalen", "Arhelleren", "Vikesland", "Fauske"), 
+                            to = c(2724.85, 1924.6, 1320.5, 596.348, 3028.69, 1848.17, 1356.21, 788.647, 2923.19, 2043.64, 1161.14, 600))
+test$T.grid <- mapvalues(test$siteID, from = c("Skjelingahaugen", "Gudmedalen", "Lavisdalen", "Ulvehaugen", "Veskre", "Rambera", "Hogsete", "Alrust", "Ovstedalen", "Arhelleren", "Vikesland", "Fauske"), 
+                         to = c(6.5, 6.5, 6.5, 6.5, 8.5, 8.5, 8.5, 8.5, 10.5, 10.5, 10.5, 10.5))
+test$P.grid <- mapvalues(test$siteID, from = c("Skjelingahaugen", "Gudmedalen", "Lavisdalen", "Ulvehaugen", "Veskre", "Rambera", "Hogsete", "Alrust", "Ovstedalen", "Arhelleren", "Vikesland", "Fauske"), 
+                         to = c(2700, 2000, 1200, 600, 2700, 2000, 1200, 600, 2700, 2000, 1200, 600))
+
+test %>% 
+  ggplot(aes(x = hour, y = mean_corr, group = siteID, colour = P.grid)) +
+  #geom_point(size = 2) +
+  #geom_line(size = 1) +
+  #scale_y_continuous(limits = c(mean+0.3, mean-0.3)) +
+  geom_smooth(method = "gam", se=F) +
+  facet_grid(T.grid ~ P.grid)
+
+test <- test[!is.na(test$siteID),]
+test$T.grid <- factor(test$T.grid, levels = c("6.5", "8.5", "10.5"), order = TRUE)
+test$P.grid <- factor(test$P.grid, levels = c("600", "1200", "2000", "2700"), order = TRUE)
+
+plotS4 <- test %>% 
+  ggplot(aes(x = hour, y = mean_corr, group = siteID, colour = T.grid, shape = P.grid)) +
+  geom_hline(yintercept=0, linetype="longdash", colour="darkgrey", size=0.4)+
+  geom_point(size = 4) +
+  scale_colour_manual(values=c("#FFB380", "#FF4D4D", "#800000"), name="Temperature")+
+  scale_shape_manual(values=c("\u25B2", "\u25CF", "\u25A0", "\u25BC"), name="Precipitation")+
+  geom_smooth(method = "gam") +
+  xlab("Hour")+ 
+  ylab("Soil moisture (deviation from mean)")+
+  #facet_wrap(~ siteID) +
+  facet_grid(T.grid ~ P.grid) +
+  theme_bw() +
+  theme(axis.title.y=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.title.x=element_text(size=11, colour = "black", margin=(margin(10,0,0,0))))+
+  theme(axis.text=element_text(size=10))+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.major = element_blank())
+plotS4
+
+#Save plot
+#Put together and save
+library(cowplot)
+prow <- plot_grid(plotS4, align="hv", label_size=12, vjust=1.1,
+                    nrow=1)
+#save_plot("D:/Prague/4. Norway/MS/Figs/FigS4_circadianSMfluct_2.0.png", prow,
+#          ncol = 2, nrow = 2, base_aspect_ratio = 1, dpi=600, bg = "white")
+
+
+#####in summer only#####
+dataSMwinter_12yr <- dataSM_12yr[dataSM_12yr$month %in% c(11, 12, 01, 02, 03, 04),]
+dataSMsummer_12yr <- dataSM_12yr[dataSM_12yr$month %in% c(05, 06, 07, 08, 09, 10),]
+
+####Calculate mean per hour per year####
+detach(package:plyr)
+hourlySMsummer_peryear <- dataSMsummer_12yr %>%
+  group_by(year, hour, logger, siteID) %>%
+  summarise(mean = mean(value, na.rm=TRUE))
+hourlySMsummer_peryear
+
+#Plot
+hourlySMsummer_peryear$hour <- as.numeric(hourlySMsummer_peryear$hour)
+hourlySMsummer_peryear%>% 
+  filter(logger == "soil.moisture1") %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_smooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+hourlySMsummer_peryear%>% 
+  filter(logger == "soil.moisture2") %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_smooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+#Need to take some out
+
+#Average the two soil moisture sensors
+hourlySMsummer_peryear_avg <- hourlySMsummer_peryear %>%
+  group_by(year, hour, siteID) %>%
+  summarise(mean = mean(mean, na.rm=TRUE))
+hourlySMsummer_peryear_avg
+
+#Plot
+str(hourlySMsummer_peryear_avg)
+hourlySMsummer_peryear_avg$hour <- as.numeric(hourlySMsummer_peryear_avg$hour)
+hourlySMsummer_peryear_avg %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_smooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+#Average per year
+hourlySMsummer <- hourlySMsummer_peryear_avg %>%
+  group_by(hour, siteID) %>%
+  summarise(mean = mean(mean, na.rm=TRUE))
+hourlySMsummer
+
+#Plot
+hourlySMsummer %>% 
+  ggplot(aes(x = hour, y = mean, colour = siteID)) +
+  geom_point(size = 2) +
+  #geom_line(size = 1) +
+  #scale_y_continuous(limits = c(mean+0.3, mean-0.3)) +
+  geom_smooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+#Nice plot for presentation
+head(hourlySMsummer)
+
+correction_factor <- hourlySMsummer %>%
+  group_by(siteID) %>%
+  summarise(corr = mean(mean, na.rm=TRUE))
+
+test <- merge(hourlySMsummer, correction_factor, by = c("siteID"))
+test$mean_corr <- test$mean - test$corr
+
+#Add temperature and precipitation
+#Add temperature and precipitation
+library(plyr)
+test$location <- mapvalues(test$siteID, from = c("Skjelingahaugen", "Gudmedalen", "Lavisdalen", "Ulvehaugen", "Veskre", "Rambera", "Hogsete", "Alrust", "Ovstedalen", "Arhelleren", "Vikesland", "Fauske"), 
+                           to = c("SKJ", "GUD", "LAV", "ULV", "VES", "RAM", "HOG", "ALR", "OVS", "ARH", "VIK", "FAU"))
+test$T.grid <- mapvalues(test$siteID, from = c("Skjelingahaugen", "Gudmedalen", "Lavisdalen", "Ulvehaugen", "Veskre", "Rambera", "Hogsete", "Alrust", "Ovstedalen", "Arhelleren", "Vikesland", "Fauske"), 
+                         to = c(6.57624, 5.86638, 6.45452, 6.16848, 8.66692, 8.76748, 9.16749, 9.13926, 10.7775, 10.5975, 10.5541, 10.3))
+test$P.grid <- mapvalues(test$siteID, from = c("Skjelingahaugen", "Gudmedalen", "Lavisdalen", "Ulvehaugen", "Veskre", "Rambera", "Hogsete", "Alrust", "Ovstedalen", "Arhelleren", "Vikesland", "Fauske"), 
+                         to = c(2724.85, 1924.6, 1320.5, 596.348, 3028.69, 1848.17, 1356.21, 788.647, 2923.19, 2043.64, 1161.14, 600))
+test$T.grid <- mapvalues(test$siteID, from = c("Skjelingahaugen", "Gudmedalen", "Lavisdalen", "Ulvehaugen", "Veskre", "Rambera", "Hogsete", "Alrust", "Ovstedalen", "Arhelleren", "Vikesland", "Fauske"), 
+                         to = c(6.5, 6.5, 6.5, 6.5, 8.5, 8.5, 8.5, 8.5, 10.5, 10.5, 10.5, 10.5))
+test$P.grid <- mapvalues(test$siteID, from = c("Skjelingahaugen", "Gudmedalen", "Lavisdalen", "Ulvehaugen", "Veskre", "Rambera", "Hogsete", "Alrust", "Ovstedalen", "Arhelleren", "Vikesland", "Fauske"), 
+                         to = c(2700, 2000, 1200, 600, 2700, 2000, 1200, 600, 2700, 2000, 1200, 600))
+
+test %>% 
+  ggplot(aes(x = hour, y = mean_corr, group = siteID, colour = P.grid)) +
+  #geom_point(size = 2) +
+  #geom_line(size = 1) +
+  #scale_y_continuous(limits = c(mean+0.3, mean-0.3)) +
+  geom_smooth(method = "gam", se=F) +
+  xlab("Hour")+ 
+  ylab("Soil moisture (baseline normalised)")+
+  facet_grid(T.grid ~ P.grid)
+
+#For presentation
+#Nice locations to compare: Hogsete and Skjelingahaugen
+sub <- test[which(test$location %in% c("HOG", "SKJ")),]
+
+plot_pres <- sub %>% 
+  ggplot(aes(x = hour, y = mean_corr, group = siteID, colour = P.grid)) +
+  #geom_point(size = 2) +
+  #geom_line(size = 1) +
+  #scale_y_continuous(limits = c(mean+0.3, mean-0.3)) +
+  scale_colour_manual(values=c("#E69F00",  "#0072B2", "#D55E00", "#999999", "#56B4E9", "#CC79A7", "black"), name="Location")+
+  xlab("Hour")+ 
+  ylab("Soil moisture (baseline normalised)")+
+  geom_smooth(method = "gam", se=F) +
+  theme_bw() +
+  theme(axis.title.y=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.title.x=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.text=element_text(size=10))+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.major = element_blank())+
+  theme(legend.position="none")
+  #facet_wrap( ~ P.grid)
+plot_pres
+
+#Save
+library(cowplot)
+prow <- plot_grid(plot_pres, labels=c(""), align="hv", label_size=12, vjust=1.1, rel_heights = c(1,2))
+prow
+save_plot("D:/Prague/4. Norway/MS/Figs/FigSX_circadian_SM_presentation.png", prow,
+          ncol = 1, nrow = 1, base_aspect_ratio = 1.2, dpi=600) #PC
+
+
+#####in winter only#####
+detach(package:plyr)
+hourlySMwinter_peryear <- dataSMwinter_12yr %>%
+  group_by(year, hour, logger, siteID) %>%
+  summarise(mean = mean(value, na.rm=TRUE))
+hourlySMwinter_peryear
+
+#Plot
+hourlySMwinter_peryear$hour <- as.numeric(hourlySMwinter_peryear$hour)
+hourlySMwinter_peryear%>% 
+  filter(logger == "soil.moisture1") %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_smooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+hourlySMwinter_peryear%>% 
+  filter(logger == "soil.moisture2") %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_smooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+#Need to take some out
+
+#Average the two soil moisture sensors
+hourlySMwinter_peryear_avg <- hourlySMwinter_peryear %>%
+  group_by(year, hour, siteID) %>%
+  summarise(mean = mean(mean, na.rm=TRUE))
+hourlySMwinter_peryear_avg
+
+#Plot
+str(hourlySMwinter_peryear_avg)
+hourlySMwinter_peryear_avg$hour <- as.numeric(hourlySMwinter_peryear_avg$hour)
+hourlySMwinter_peryear_avg %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_smooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+#Average per year
+hourlySMwinter <- hourlySMwinter_peryear_avg %>%
+  group_by(hour, siteID) %>%
+  summarise(mean = mean(mean, na.rm=TRUE))
+hourlySMwinter
+
+#Plot
+hourlySMwinter %>% 
+  ggplot(aes(x = hour, y = mean, colour = siteID)) +
+  geom_point(size = 2) +
+  #geom_line(size = 1) +
+  #scale_y_continuous(limits = c(mean+0.3, mean-0.3)) +
+  geom_smooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+#Nice plot for presentation
+head(hourlySMwinter)
+
+correction_factor <- hourlySMwinter %>%
+  group_by(siteID) %>%
+  summarise(corr = mean(mean, na.rm=TRUE))
+
+test <- merge(hourlySMwinter, correction_factor, by = c("siteID"))
+test$mean_corr <- test$mean - test$corr
+
+#Add temperature and precipitation
+
+
+test %>% 
+  ggplot(aes(x = hour, y = mean_corr, colour = siteID)) +
+  #geom_point(size = 2) +
+  #geom_line(size = 1) +
+  #scale_y_continuous(limits = c(mean+0.3, mean-0.3)) +
+  geom_smooth(method = "gam", se=F)
+#facet_wrap(~ siteID)
+
+
+################################Same for the temperature data##########################################
+setwd("D:/Prague/4. Norway/dataNorway/Temperature") #PC
+
+#Read in data
+dataTemp <- read.csv(file = 'Temperature.csv')
+str(dataTemp)
+head(dataTemp)
+tail(dataTemp)
+
+#Set date format
+dataTemp$date <- ymd_hms(dataTemp$date, tz = "Europe/Paris")
+
+#How many sensors per location?
+str(dataTemp)
+dataTemp$siteID <- as.factor(dataTemp$siteID)
+dataTemp$logger <- as.factor(dataTemp$logger)
+levels(dataTemp$siteID)
+levels(dataTemp$logger)
+
+#Calculating specific events in 2020
+dataTemp_2020 <- dataTemp[dataTemp$date >=  "2020-01-01" & dataTemp$date <= "2020-07-15",]
+head(dataTemp_2020)
+dataTemp_2020$siteID <- factor(dataTemp_2020$siteID)
+str(dataTemp_2020)
+
+#### Calculate daily means, min, max and cv ####
+detach(package:plyr)
+threshold <- 0
+dailyTemp <- dataTemp_2020 %>%
+  filter(!is.na(value)) %>%
+  mutate(date = dmy(paste0(format(date, "%d.%m.%Y")))) %>%
+  group_by(date, logger, siteID) %>%
+  summarise(mean = mean(value, na.rm=TRUE), min = min(value, na.rm=TRUE), max = max(value, na.rm=TRUE), cv = cv(value, na.rm=TRUE),
+            dif = abs(max(value, na.rm=TRUE)-min(value, na.rm=TRUE)))
+dailyTemp
+
+#Determine time periods
+dailyTemp %>% 
+  filter(logger == "tempsoil") %>% 
+  ggplot(aes(x = date, y = mean, colour = siteID)) +
+  geom_line(size = 1) +
+  facet_wrap(~ siteID)
+#Gudmedalen we will not be able to determine soil defrosting
+
+#Calculate first date at which soil temp went above 0 --> some fluctuations, so perhaps above 2.5 degrees
+#dailyTemp[which(dailyTemp$mean[dailyTemp$siteID == "Alrust" & dailyTemp$logger == "tempsoil" ] > 2.5),][1]
+#Doesn't really work, let's go manually
+siteID <- levels(dailyTemp$siteID)
+date_defrosting <- c("2020-04-20", "2020-05-04", "2020-04-09", "NA", "2020-04-21", "2020-06-12", "2020-04-27", 
+                     "2020-06-04", "2020-07-04", "2020-05-28", "2020-06-03", "2020-04-07")
+#Based on a 2020-07-15 sampling date
+days_after_defrosting <- c(87, 72, 98, NA, 86, 34, 80, 42, 12, 49, 43, 100)
+soil_defrosting <- data.frame(siteID, date_defrosting, days_after_defrosting)
+#save(soil_defrosting, file = "soil_defrosting.Rda")
+#ALR 2020-04-20
+#ARH 2020-05-04
+#FAU 2020-04-09
+#GUD NA
+#HOG 2020-04-21
+#LAV 2020-06-12
+#OVS 2020-04-27
+#RAM 2020-06-04
+#SKJ 2020-07-04
+#ULV 2020-05-28
+#VES 2020-06-03
+#VIK 2020-04-07
+
+#Calculate mean temperature from January until end of March (first defrosting is in beginning of April)
+dailyTwinter <- dailyTemp[dailyTemp$date >=  "2020-01-01" & dailyTemp$date <= "2020-04-01",]
+avgTwinter <- dailyTwinter %>%
+  group_by(logger, siteID) %>%
+  summarise(meanTwinter = mean(mean, na.rm=TRUE), minTwinter = mean(min, na.rm=TRUE), maxTwinter = mean(max, na.rm=TRUE), 
+            cvTwinter_within = mean(cv, na.rm=TRUE), cvTwinter_between = cv(mean, na.rm=TRUE), difTwinter = mean(dif, na.rm=TRUE))
+avgTwinter
+#save(avgTwinter, file = "avgTwinter.Rda")
+
+#Calculate mean temperatures 1-07 until 15-07
+dailyTJuly <- dailyTemp[dailyTemp$date >=  "2020-07-01" & dailyTemp$date <= "2020-07-15",]
+avgTJuly <- dailyTJuly %>%
+  group_by(logger, siteID) %>%
+  summarise(meanTJuly = mean(mean, na.rm=TRUE), minTJuly = mean(min, na.rm=TRUE), maxTJuly = mean(max, na.rm=TRUE), 
+            cvTJuly_within = mean(cv, na.rm=TRUE), cvTJuly_between = cv(mean, na.rm=TRUE), difTJuly = mean(dif, na.rm=TRUE))
+avgTJuly
+#save(avgTJuly, file = "avgTJuly.Rda")
+
+#Calculate mean temperatures for month June
+dailyTJune <- dailyTemp[dailyTemp$date >=  "2020-06-01" & dailyTemp$date <= "2020-07-01",]
+avgTJune <- dailyTJune %>%
+  group_by(logger, siteID) %>%
+  summarise(meanTJune = mean(mean, na.rm=TRUE), minTJune = mean(min, na.rm=TRUE), maxTJune = mean(max, na.rm=TRUE), 
+            cvTJune_within = mean(cv, na.rm=TRUE), cvTJune_between = cv(mean, na.rm=TRUE), difTJune = mean(dif, na.rm=TRUE))
+avgTJune
+#save(avgTJune, file = "avgTJune.Rda")
+
+#Calculate mean temperature for 15-06 until 15-07 (month before sampling)
+dailyTmbefore <- dailyTemp[dailyTemp$date >=  "2020-06-15" & dailyTemp$date <= "2020-07-15",]
+avgTmbefore <- dailyTmbefore %>%
+  group_by(logger, siteID) %>%
+  summarise(meanTmbefore = mean(mean, na.rm=TRUE), minTmbefore = mean(min, na.rm=TRUE), maxTmbefore = mean(max, na.rm=TRUE), 
+            cvTmbefore_within = mean(cv, na.rm=TRUE), cvTmbefore_between = cv(mean, na.rm=TRUE), difTmbefore = mean(dif, na.rm=TRUE))
+avgTmbefore
+#save(avgTmbefore, file = "avgTmbefore.Rda")
+
+#############################################12 year annual mean CALCULATIONS##################################################
+#12 year mean temp
+#Subset
+head(dataTemp$date)
+
+#Calculating specific events in 2020
+dataTemp_12yr <- dataTemp[dataTemp$date >=  "2009-07-10" & dataTemp$date <= "2020-07-10",]
+head(dataTemp_12yr)
+dataTemp_12yr$siteID <- factor(dataTemp_12yr$siteID)
+str(dataTemp_12yr)
+
+#### Calculate daily means, min, max and cv ####
+detach(package:plyr)
+threshold <- 0
+dailyTemp <- dataTemp_12yr %>%
+  filter(!is.na(value)) %>%
+  mutate(date = dmy(paste0(format(date, "%d.%m.%Y")))) %>%
+  group_by(date, logger, siteID) %>%
+  summarise(mean = mean(value, na.rm=TRUE), min = min(value, na.rm=TRUE), max = max(value, na.rm=TRUE), cv = cv(value, na.rm=TRUE),
+            dif = abs(max(value, na.rm=TRUE)-min(value, na.rm=TRUE)))
+dailyTemp
+
+#Plot
+dailyTemp %>% 
+  filter(logger == "tempsoil") %>% 
+  ggplot(aes(x = date, y = dif, colour = siteID)) + #mmm weird
+  geom_line(size = 1) +
+  facet_wrap(~ siteID)
+
+#Calculate 12 year annual mean and mean of min, max and sd per logger
+dailyTemp$year <- factor(str_split_fixed(dailyTemp$date, n=3, "-")[,1])
+
+avgTemp_peryear <- dailyTemp %>%
+  group_by(logger, siteID, year) %>%
+  summarise(mean_peryear = mean(mean, na.rm=TRUE), min_peryear = mean(min, na.rm=TRUE), max_peryear = mean(max, na.rm=TRUE), 
+            cv_within = mean(cv, na.rm=TRUE), cv_between = cv(mean, na.rm=TRUE), dif = mean(dif, na.rm=TRUE))
+avgTemp_peryear
+
+avgTemp_12yr <- avgTemp_peryear %>%
+  group_by(logger, siteID) %>%
+  summarise(meanT_12yr = mean(mean_peryear, na.rm=TRUE), minT_12yr = mean(min_peryear, na.rm=TRUE), maxT_12yr = mean(max_peryear, na.rm=TRUE), 
+            cvT_12yr_within = mean(cv_within, na.rm=TRUE), cvT_12yr_between = mean(cv_between, na.rm=TRUE), difT_12yr = mean(dif, na.rm=TRUE))
+avgTemp_12yr
+
+#Plot trend
+dailyTemp %>% 
+  filter(logger == "temp200cm") %>% 
+  ggplot(aes(x = date, y = mean, colour = siteID)) +
+  geom_point(size = 1) +
+  geom_smooth(method = "lm", colour="black") +
+  facet_wrap(~ siteID)
+
+#Calculate trend of linear line
+library(QuantPsyc)
+dailyTemp$logger <- factor(dailyTemp$logger)
+str(dailyTemp)
+beta <- list()
+for (i in levels(dailyTemp$siteID)) {
+  for (j in levels(dailyTemp$logger)) {
+    sub <- dailyTemp[which(dailyTemp$siteID == i & dailyTemp$logger == j),]
+    m <- lm(mean ~ date, data = sub)
+    beta[[paste(i, j, sep="_")]] <- lm.beta(m)
+  }
+}
+
+library(reshape2)
+betaTemp <- melt(beta)
+colnames(betaTemp) <- c("betaTemp_12yr", "L1")
+betaTemp$siteID <- str_split_fixed(betaTemp$L1, n=2, "_")[,1]
+betaTemp$logger <- str_split_fixed(betaTemp$L1, n=2, "_")[,2]
+betaTemp$L1 <- NULL
+
+#Merge with avg 12yr data
+avgTemp_12yr <- merge(avgTemp_12yr, betaTemp, by = c("siteID", "logger"))
+#save(avgTemp_12yr, file = "avgTemp_12yr.Rda")
+
+#Same but for the winter and summer separated
+#Summer: May until October
+#Winter: November until April
+dailyTemp$month <- str_split_fixed(dailyTemp$date, n = 3, "-")[,2]
+
+dailyTwinter <- dailyTemp[dailyTemp$month %in% c(11, 12, 01, 02, 03, 04),]
+dailyTsummer <- dailyTemp[dailyTemp$month %in% c(05, 06, 07, 08, 09, 10),]
+
+avgTwinter_peryear <- dailyTwinter %>%
+  group_by(logger, siteID, year) %>%
+  summarise(mean_peryear = mean(mean, na.rm=TRUE), min_peryear = mean(min, na.rm=TRUE), max_peryear = mean(max, na.rm=TRUE), 
+            cv_within = mean(cv, na.rm=TRUE), cv_between = cv(mean, na.rm=TRUE), dif = mean(dif, na.rm=TRUE))
+avgTwinter_peryear
+
+avgTwinter_12yr <- avgTwinter_peryear %>%
+  group_by(logger, siteID) %>%
+  summarise(meanTwinter_12yr = mean(mean_peryear, na.rm=TRUE), minTwinter_12yr = mean(min_peryear, na.rm=TRUE), maxTwinter_12yr = mean(max_peryear, na.rm=TRUE), 
+            cvTwinter_12yr_within = mean(cv_within, na.rm=TRUE), cvTwinter_12yr_between = mean(cv_between, na.rm=TRUE), difTwinter_12yr = mean(dif, na.rm=TRUE))
+avgTwinter_12yr
+
+#Plot trend
+dailyTwinter %>% 
+  filter(logger == "temp200cm") %>% 
+  ggplot(aes(x = date, y = mean, colour = siteID)) +
+  geom_point(size = 1) +
+  geom_smooth(method = "lm", colour="black") +
+  facet_wrap(~ siteID)
+
+#Calculate trend of linear line
+library(QuantPsyc)
+beta <- list()
+for (i in levels(dailyTwinter$siteID)) {
+  for (j in levels(dailyTwinter$logger)) {
+    sub <- dailyTwinter[which(dailyTwinter$siteID == i & dailyTwinter$logger == j),]
+    m <- lm(mean ~ date, data = sub)
+    beta[[paste(i, j, sep="_")]] <- lm.beta(m)
+  }
+}
+
+library(reshape2)
+betaTwinter <- melt(beta)
+colnames(betaTwinter) <- c("betaTwinter_12yr", "L1")
+betaTwinter$siteID <- str_split_fixed(betaTwinter$L1, n=2, "_")[,1]
+betaTwinter$logger <- str_split_fixed(betaTwinter$L1, n=2, "_")[,2]
+betaTwinter$L1 <- NULL
+
+#Merge with avg 12yr data
+avgTwinter_12yr <- merge(avgTwinter_12yr, betaTwinter, by = c("siteID", "logger"))
+#save(avgTwinter_12yr, file = "avgTwinter_12yr.Rda")
+
+avgTsummer_peryear <- dailyTsummer %>%
+  group_by(logger, siteID, year) %>%
+  summarise(mean_peryear = mean(mean, na.rm=TRUE), min_peryear = mean(min, na.rm=TRUE), max_peryear = mean(max, na.rm=TRUE), 
+            cv_within = mean(cv, na.rm=TRUE), cv_between = cv(mean, na.rm=TRUE), dif = mean(dif, na.rm=TRUE))
+avgTsummer_peryear
+
+avgTsummer_12yr <- avgTsummer_peryear %>%
+  group_by(logger, siteID) %>%
+  summarise(meanTsummer_12yr = mean(mean_peryear, na.rm=TRUE), minTsummer_12yr = mean(min_peryear, na.rm=TRUE), maxTsummer_12yr = mean(max_peryear, na.rm=TRUE), 
+            cvTsummer_12yr_within = mean(cv_within, na.rm=TRUE), cvTsummer_12yr_between = mean(cv_between, na.rm=TRUE),
+            difTsummer_12yr = mean(dif, na.rm=TRUE))
+avgTsummer_12yr
+
+#Plot trend
+dailyTsummer %>% 
+  filter(logger == "temp200cm") %>% 
+  ggplot(aes(x = date, y = mean, colour = siteID)) +
+  geom_point(size = 1) +
+  geom_smooth(method = "lm", colour="black") +
+  facet_wrap(~ siteID)
+
+#Calculate trend of linear line
+library(QuantPsyc)
+beta <- list()
+for (i in levels(dailyTsummer$siteID)) {
+  for (j in levels(dailyTsummer$logger)) {
+    sub <- dailyTsummer[which(dailyTsummer$siteID == i & dailyTsummer$logger == j),]
+    m <- lm(mean ~ date, data = sub)
+    beta[[paste(i, j, sep="_")]] <- lm.beta(m)
+  }
+}
+
+library(reshape2)
+betaTsummer <- melt(beta)
+colnames(betaTsummer) <- c("betaTsummer_12yr", "L1")
+betaTsummer$siteID <- str_split_fixed(betaTsummer$L1, n=2, "_")[,1]
+betaTsummer$logger <- str_split_fixed(betaTsummer$L1, n=2, "_")[,2]
+betaTsummer$L1 <- NULL
+
+#Merge with avg 12yr data
+avgTsummer_12yr <- merge(avgTsummer_12yr, betaTsummer, by = c("siteID", "logger"))
+#save(avgTsummer_12yr, file = "avgTsummer_12yr.Rda")
+
+
+########################################CHECKING DAY-NIGHT CYCLES TEMP################################################
+#####Figure on daily-night cycle#####
+#12 year mean SM
+head(dataTemp_12yr)
+dataTemp_12yr$year <- str_split_fixed(dataTemp_12yr$date, n = 3, "-")[,1]
+dataTemp_12yr$hour <- str_sub(str_split_fixed(dataTemp_12yr$date, n = 3, " ")[,2], 1,2)
+dataTemp_12yr$month <- str_split_fixed(dataTemp_12yr$date, n = 3, "-")[,2]
+
+####Calculate mean per hour per year####
+detach(package:plyr)
+hourlyTemp_peryear <- dataTemp_12yr %>%
+  group_by(year, hour, logger, siteID) %>%
+  summarise(mean = mean(value, na.rm=TRUE))
+hourlyTemp_peryear
+
+#Plot
+str(hourlyTemp_peryear_avg)
+hourlyTemp_peryear$hour <- as.numeric(hourlyTemp_peryear$hour)
+hourlyTemp_peryear%>% 
+  filter(logger == "tempsoil") %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_Tempooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+hourlyTemp_peryear%>% 
+  filter(logger == "tempabove") %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_Tempooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+hourlyTemp_peryear%>% 
+  filter(logger == "temp30cm") %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_Tempooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+hourlyTemp_peryear%>% 
+  filter(logger == "temp200cm") %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_Tempooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+#Have to take some of these lines out
+#For soil.moisture1, take out: Fauske 2016, Rambera 2013, Veskre 2012 + 2013, Lavisdalen 2013
+#hourlyTemp_peryear$mean[hourlyTemp_peryear$logger == "soil.moisture1" & hourlyTemp_peryear$siteID == "Fauske" & hourlyTemp_peryear$year == "2016"] <- NA
+#hourlyTemp_peryear$mean[hourlyTemp_peryear$logger == "soil.moisture1" & hourlyTemp_peryear$siteID == "Rambera" & hourlyTemp_peryear$year == "2013"] <- NA
+#hourlyTemp_peryear$mean[hourlyTemp_peryear$logger == "soil.moisture1" & hourlyTemp_peryear$siteID == "Veskre" & hourlyTemp_peryear$year %in% c("2012", "2013")] <- NA
+#hourlyTemp_peryear$mean[hourlyTemp_peryear$logger == "soil.moisture1" & hourlyTemp_peryear$siteID == "Lavisdalen" & hourlyTemp_peryear$year %in% c("2013")] <- NA
+
+#For soil.moisture2, take out: Fauske 2016, Rambera 2013
+#hourlyTemp_peryear$mean[hourlyTemp_peryear$logger == "soil.moisture2" & hourlyTemp_peryear$siteID == "Fauske" & hourlyTemp_peryear$year == "2016"] <- NA
+#hourlyTemp_peryear$mean[hourlyTemp_peryear$logger == "soil.moisture2" & hourlyTemp_peryear$siteID == "Rambera" & hourlyTemp_peryear$year == "2013"] <- NA
+
+#Average per year
+hourlyTemp <- hourlyTemp_peryear %>%
+  group_by(hour, logger, siteID) %>%
+  summarise(mean = mean(mean, na.rm=TRUE))
+hourlyTemp
+
+#Plot
+hourlyTemp$hour <- as.numeric(hourlyTemp$hour)
+hourlyTemp %>% 
+  ggplot(aes(x = hour, y = mean, colour = siteID)) +
+  #geom_point(size = 2) +
+  #geom_line(size = 1) +
+  #scale_y_continuous(limits = c(mean+0.3, mean-0.3)) +
+  geom_smooth(method = "gam") +
+  facet_wrap(~ logger, scale = "free")
+
+
+#####in summer only#####
+dataTempwinter_12yr <- dataTemp_12yr[dataTemp_12yr$month %in% c(11, 12, 01, 02, 03, 04),]
+dataTempsummer_12yr <- dataTemp_12yr[dataTemp_12yr$month %in% c(05, 06, 07, 08, 09, 10),]
+
+####Calculate mean per hour per year####
+detach(package:plyr)
+hourlyTempsummer_peryear <- dataTempsummer_12yr %>%
+  group_by(year, hour, logger, siteID) %>%
+  summarise(mean = mean(value, na.rm=TRUE))
+hourlyTempsummer_peryear
+
+#Plot
+hourlyTempsummer_peryear$hour <- as.numeric(hourlyTempsummer_peryear$hour)
+hourlyTempsummer_peryear%>% 
+  filter(logger == "tempsoil") %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_Tempooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+hourlyTempsummer_peryear%>% 
+  filter(logger == "temp200cm") %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_Tempooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+#Need to take some out
+
+#Average per year
+hourlyTempsummer <- hourlyTempsummer_peryear %>%
+  group_by(hour, logger, siteID) %>%
+  summarise(mean = mean(mean, na.rm=TRUE))
+hourlyTempsummer
+
+#Plot
+hourlyTempsummer$hour <- as.numeric(hourlyTempsummer$hour)
+hourlyTempsummer%>% 
+  ggplot(aes(x = hour, y = mean, colour = siteID)) +
+  geom_line(size = 1) +
+  #geom_Tempooth(method = "gam")+
+  facet_wrap(~ logger, scale = "free")
+
+
+#####in winter only#####
+####Calculate mean per hour per year####
+detach(package:plyr)
+hourlyTempwinter_peryear <- dataTempwinter_12yr %>%
+  group_by(year, hour, logger, siteID) %>%
+  summarise(mean = mean(value, na.rm=TRUE))
+hourlyTempwinter_peryear
+
+#Plot
+hourlyTempwinter_peryear$hour <- as.numeric(hourlyTempwinter_peryear$hour)
+hourlyTempwinter_peryear%>% 
+  filter(logger == "tempsoil") %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_Tempooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+
+hourlyTempwinter_peryear%>% 
+  filter(logger == "temp200cm") %>% 
+  ggplot(aes(x = hour, y = mean, colour = year)) +
+  geom_line(size = 1) +
+  #geom_Tempooth(method = "gam")+
+  facet_wrap(~ siteID, scale = "free")
+#Need to take some out
+
+#Average per year
+hourlyTempwinter <- hourlyTempwinter_peryear %>%
+  group_by(hour, logger, siteID) %>%
+  summarise(mean = mean(mean, na.rm=TRUE))
+hourlyTempwinter
+
+#Plot
+hourlyTempwinter$hour <- as.numeric(hourlyTempwinter$hour)
+hourlyTempwinter%>% 
+  ggplot(aes(x = hour, y = mean, colour = siteID)) +
+  geom_line(size = 1) +
+  #geom_Tempooth(method = "gam")+
+  facet_wrap(~ logger, scale = "free")
+
+
+
+
+#####End - go to location_characteristics.R to place everything in one dataframe#####
+
+
+#####################################################OLD#################################################################
+#############################################Initial averaging per month###################################################
+#Subset for 3 years prior to sampling
+dataTemp_3yrs <- dataTemp[dataTemp$date >=  "2018-01-01" & dataTemp$date <= "2020-07-20",]
+head(dataTemp_3yrs)
+
+#Test plot
+dataTemp_3yrs %>% 
+  filter(logger == "tempabove") %>% 
+  ggplot(aes(x = date, y = value)) +
+  geom_line() +
+  facet_wrap(~ siteID)
+#Some gaps everywhere in temp30cm
+#Flat lines in winter probably indicate snow cover
+
+#### Calculate daily means ####
+threshold <-  0  # no threshold set
+dailyTemp <- dataTemp_3yrs %>%
+  filter(!is.na(value)) %>%
+  mutate(date = dmy(paste0(format(date, "%d.%m.%Y")))) %>%
+  group_by(date, logger, siteID) %>%
+  summarise(n = n(), value = mean(value), sum = sum(value)) %>%
+  filter(n > threshold) %>%
+  select(-n, -sum)
+dailyTemp
+
+#View(dailyTemp) #Looks good
+#Test plot
+dailyTemp %>% 
+  filter(logger == "temp200cm") %>% 
+  ggplot(aes(x = date, y = value, colour = siteID)) +
+  geom_line(size=1) +
+  facet_wrap(~ logger)
+#Good
+
+#No averaging of loggers needed, they are different
+#save(dailyTemp, file = "dailyTemp.RDa")
+
+#### Calculate monthly means ####
+threshold <-  1 * 7 * 24 #at least 3 weeks of data
+monthlyTemp <- dataTemp_3yrs %>%
+  filter(!is.na(value)) %>%
+  mutate(date = dmy(paste0("15-",format(date, "%b.%Y")))) %>%
+  group_by(date, logger, siteID) %>%
+  summarise(n = n(), value = mean(value), sum = sum(value)) %>%
+  filter(n > threshold) %>%
+  select(-n, -sum)
+monthlyTemp
+
+#Test plot
+monthlyTemp %>% 
+  ggplot(aes(x = date, y = value, colour = siteID)) +
+  geom_line(size=1) +
+  facet_wrap(~ logger)
+#Good
+
+#No averaging of loggers needed
+save(monthlyTemp, file = "monthlyTemp.RDa")

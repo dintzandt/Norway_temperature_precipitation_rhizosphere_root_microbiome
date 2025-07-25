@@ -1,0 +1,248 @@
+rm(list=ls())
+getwd()
+setwd("C:/Users/dzandt/Desktop/Norway_microbiome") #PC RU
+
+#Install packages
+#Only once:
+#Install Rtools via https://cran.r-project.org/bin/windows/Rtools/index.html
+#writeLines('PATH="${RTOOLS40_HOME}\\usr\\bin;${PATH}"', con = "~/.Renviron")
+#restart R session
+#Sys.which("make") #to check whether it works
+#good to go
+
+#Load packages
+library(microbiome) # data analysis and visualisation
+library(phyloseq) # also the basis of data object. Data analysis and visualisation
+library(RColorBrewer) # nice color options
+library(ggpubr) # publication quality figures, based on ggplot2
+library(dplyr) # data handling
+library(SpiecEasi) # Network analysis for sparse compositional data  
+library(network)
+library(intergraph)
+#devtools::install_github("briatte/ggnet")
+library(ggnet)
+library(igraph)
+library(microbiomeutilities)
+library(pulsar)
+library(data.table)
+
+#Read in physeq data for rhizosphere
+load("rhizo_physeq_s_16S.RDa")
+load("rhizo_physeq_s_ITS.RDa")
+
+#For root
+load("root_physeq_s_16S.RDa")
+load("root_physeq_s_ITS.RDa")
+
+#Are the samples in the same order for 16S and ITS?
+colnames(otu_table(rhizo_physeq_s_16S))
+colnames(otu_table(rhizo_physeq_s_ITS))
+colnames(otu_table(root_physeq_s_16S))
+colnames(otu_table(root_physeq_s_ITS))
+#Yes, but there is one samples missing more in the ITS matrix rhizo --> RAM.S3
+#There is one more missing in the 16S matrix for root --> VIK.R.8
+sample_data(rhizo_physeq_s_16S)
+rhizo_physeq_s_16S <- subset_samples(rhizo_physeq_s_16S, sample.code != "RAM.S3")
+sample_data(root_physeq_s_ITS)
+root_physeq_s_ITS <- subset_samples(root_physeq_s_ITS, sample.code != "VIK.R.8")
+
+############################################END OF DATA HANDLING##############################################
+#Run networks for all locations together
+network_rhizo_together <- spiec.easi(list(rhizo_physeq_s_16S, rhizo_physeq_s_ITS), method='mb', nlambda=45,
+                      lambda.min.ratio=1e-2, pulsar.params = list(thresh = 0.05, rep.num = 300)) #400, too large object
+getStability(network_rhizo_together) #not stable, nlambda 30 is 0.0476, nlambda 40 0.0472, with nrep 100: 0.0489
+save(network_rhizo_together, file="net.rhizo.mb.together.nlam45.thresh0.05_rep300_sam6_blk1contam_8reps_all.Rda")
+#Threshold 0.1 is really far from stable
+
+network_root_together <- spiec.easi(list(root_physeq_s_16S, root_physeq_s_ITS), method='mb', nlambda=45,
+                                     lambda.min.ratio=1e-2, pulsar.params = list(thresh = 0.05, rep.num = 300))
+getStability(network_root_together) #not stable, nlambda 30 is 0.041, nlambda 40 is 0.0494, rep100 0.044
+save(network_root_together, file="net.root.mb.together.nlam45.thresh0.05_rep300_sam6_blk1contam_8reps_all.Rda")
+#Threshold 0.1 is really far from stable
+
+#Load networks
+load("net.rhizo.mb.together.nlam45.thresh0.05_rep300_sam6_blk1contam_8reps_all.Rda")
+load("net.root.mb.together.nlam45.thresh0.05_rep300_sam6_blk1contam_8reps_all.Rda")
+
+#Plot networks
+dtype_rhizo <- c(rep(1,ntaxa(rhizo_physeq_s_16S)), rep(2,ntaxa(rhizo_physeq_s_ITS)))
+plot(adj2igraph(getRefit(network_rhizo_together)), vertex.color=dtype_rhizo+1, vertex.size=9)
+#Blue should be 16S, green ITS
+dtype_root <- c(rep(1,ntaxa(root_physeq_s_16S)), rep(2,ntaxa(root_physeq_s_ITS)))
+plot(adj2igraph(getRefit(network_root_together)), vertex.color=dtype_root+1, vertex.size=9)
+
+#Extract edge weights
+rhizo_temp <- symBeta(getOptBeta(network_rhizo_together), mode="maxabs")
+rhizo_weight <- Matrix::summary(t(rhizo_temp))[,3]
+
+root_temp <- symBeta(getOptBeta(network_root_together), mode="maxabs")
+root_weight <- Matrix::summary(t(root_temp))[,3]
+
+#Plot mb network per class
+#ig2.rhizo <- adj2igraph(getRefit(network_rhizo_together),diag=TRUE,
+#                        edge.attr=list(weight=rhizo_weight), 
+#                        vertex.attr=c(list(taxa_names(rhizo_physeq_s_16S)), list(taxa_names(rhizo_physeq_s_ITS))))
+
+temp <- c(list(taxa_names(rhizo_physeq_s_16S)), list(taxa_names(rhizo_physeq_s_ITS)))
+temp2 <- melt(temp)
+temp2$dtype <- dtype_rhizo
+library(plyr)
+str(temp2)
+temp2$group <- revalue(factor(temp2$dtype), c("1" = "16S", "2" = "ITS"))
+temp2$ASV <- paste(temp2$value, temp2$group, sep = "_")
+ASV_names_rhizo <- temp2
+
+temp <- c(list(taxa_names(root_physeq_s_16S)), list(taxa_names(root_physeq_s_ITS)))
+temp2 <- melt(temp)
+temp2$dtype <- dtype_root
+library(plyr)
+str(temp2)
+temp2$group <- revalue(factor(temp2$dtype), c("1" = "16S", "2" = "ITS"))
+temp2$ASV <- paste(temp2$value, temp2$group, sep = "_")
+ASV_names_root <- temp2
+
+ig2.rhizo <- adj2igraph(getRefit(network_rhizo_together),diag=TRUE,
+                        edge.attr=list(weight=rhizo_weight),
+                        vertex.attr=list(name=ASV_names_rhizo$ASV))
+
+E(ig2.rhizo)[weight > 0]$color<-"steelblue" #now color the edges based on their values positive is steelblue
+E(ig2.rhizo)[weight < 0]$color<-"orange"  #now color the edges based on their values
+
+ig2.root <- adj2igraph(getRefit(network_root_together),diag=TRUE,
+                        edge.attr=list(weight=root_weight),
+                        vertex.attr=list(name=ASV_names_root$ASV))
+
+E(ig2.root)[weight > 0]$color<-"steelblue" #now color the edges based on their values positive is steelblue
+E(ig2.root)[weight < 0]$color<-"orange"  #now color the edges based on their values
+
+#Increase visualisation
+rhizo.net <- asNetwork(ig2.rhizo)
+network::set.edge.attribute(rhizo.net, "color", ifelse(rhizo.net %e% "weight" > 0, "steelblue", "orange"))
+
+root.net <- asNetwork(ig2.root)
+network::set.edge.attribute(root.net, "color", ifelse(root.net %e% "weight" > 0, "steelblue", "orange"))
+
+#Add taxonomic info
+tax.rhizo.16S <- as.data.frame(tax_table(rhizo_physeq_s_16S)@.Data)
+tax.rhizo.ITS <- as.data.frame(tax_table(rhizo_physeq_s_ITS)@.Data)
+colnames(tax.rhizo.16S)
+colnames(tax.rhizo.ITS)
+colnames(tax.rhizo.16S)[1] <- c("kingdom")
+tax.rhizo <- rbind(tax.rhizo.16S, tax.rhizo.ITS)
+tax.rhizo$ASV <- row.names(tax.rhizo)
+asv.rhizo.16S <- t(otu_table(rhizo_physeq_s_16S)@.Data)
+asv.rhizo.ITS <- t(otu_table(rhizo_physeq_s_ITS)@.Data)
+asv.rhizo <- cbind(asv.rhizo.16S, asv.rhizo.ITS)
+phyla.rhizo <- map_levels(colnames(asv.rhizo), from = "ASV" , to = "phylum", tax.rhizo)
+rhizo.net %v% "phylum" <- phyla.rhizo
+
+tax.root.16S <- as.data.frame(tax_table(root_physeq_s_16S)@.Data)
+tax.root.ITS <- as.data.frame(tax_table(root_physeq_s_ITS)@.Data)
+colnames(tax.root.16S)
+colnames(tax.root.ITS)
+colnames(tax.root.16S)[1] <- c("kingdom")
+tax.root <- rbind(tax.root.16S, tax.root.ITS)
+tax.root$ASV <- row.names(tax.root)
+asv.root.16S <- t(otu_table(root_physeq_s_16S)@.Data)
+asv.root.ITS <- t(otu_table(root_physeq_s_ITS)@.Data)
+asv.root <- cbind(asv.root.16S, asv.root.ITS)
+phyla.root <- map_levels(colnames(asv.root), from = "ASV" , to = "phylum", tax.root)
+root.net %v% "phylum" <- phyla.root
+
+#Set weights of nodes
+vsize.rhizo    <- rowMeans(clr(asv.rhizo, 1))+6
+rhizo.net %v% "nodesize" <- vsize.rhizo
+
+vsize.root    <- rowMeans(clr(asv.root, 1))+6
+root.net %v% "nodesize" <- vsize.root
+
+#Set 16S or ITS
+rhizo.net %v% "nodetype" <- dtype_rhizo
+root.net %v% "nodetype" <- dtype_root
+
+#Make network plot
+mycolors <- scale_color_manual(values = c("#a6cee3", "#1f78b4", "#b2df8a", "#33a02c","#fb9a99","#e31a1c",
+                                          "#fdbf6f","#ff7f00","#cab2d6","#6a3d9a","#ffff99","#b15928", 
+                                          "black", "red", "blue", "green", "orange", "grey70", "purple", "yellow",
+                                          "forestgreen", "pink", "white", "grey20"))
+
+p <- ggnet2(rhizo.net, node.color = "phylum",
+            label = F, node.size = "nodesize", 
+            label.size = 2, edge.color = "color") + guides(color=guide_legend(title="Phylum"), size = FALSE) + mycolors
+p 
+
+p <- ggnet2(root.net, node.color = "phylum",
+            label = F, node.size = "nodesize", 
+            label.size = 2, edge.color = "color") + guides(color=guide_legend(title="Phylum"), size = FALSE) + mycolors
+p 
+
+
+#Identify modularity
+set.seed(1234)
+modules.rhizo = cluster_spinglass(ig2.rhizo, implementation = 'neg')
+modularity(modules.rhizo)
+
+set.seed(1234)
+modules.root = cluster_spinglass(ig2.root, implementation = 'neg')
+modularity(modules.root)
+
+#Save
+#save(modules.rhizo, file = "modules.rhizo.together.nlam45.thresh0.05_rep300_sam6_blk1contam_8reps_all.RDa")
+#save(modules.root, file = "modules.root.together.nlam45.thresh0.05_rep300_sam6_blk1contam_8reps_all.RDa")
+
+load(file = "modules.rhizo.together.nlam45.thresh0.05_rep300_sam6_blk1contam_8reps_all.RDa")
+load(file = "modules.root.together.nlam45.thresh0.05_rep300_sam6_blk1contam_8reps_all.RDa")
+
+#Add membership to network plot
+rhizo.net %v% "membership" <- modules.rhizo$membership
+root.net %v% "membership" <- modules.root$membership
+
+#Make network plot
+library(cowplot)
+mycolors <- scale_color_manual(values = c("#a6cee3", "#1f78b4", "#b2df8a", "#33a02c","#fb9a99","#e31a1c",
+                                          "#fdbf6f","#ff7f00","#cab2d6","#6a3d9a","#b15928", 
+                                          "black", "red", "blue", "green", "orange", "yellow", "black", "grey", "orange", "purple", "pink"))
+
+p.rhizo <- ggnet2(rhizo.net, mode = "fruchtermanreingold", node.color = "membership", 
+                 label = F, node.size = "nodesize",  
+                 label.size = 2, edge.color = "color") + guides(color=guide_legend(title="Cluster"), size = FALSE) + mycolors
+p.rhizo
+
+p.root <- ggnet2(root.net, mode = "fruchtermanreingold", node.color = "membership", 
+                  label = F, node.size = "nodesize",  
+                  label.size = 2, edge.color = "color") + guides(color=guide_legend(title="Cluster"), size = FALSE) + mycolors
+p.root
+
+#Save plots
+prow.rhizo <- plot_grid(p.rhizo, labels=c("A"), align="hv", label_size=12, vjust=1.1, rel_heights = c(1,2))
+#save_plot("C:/Users/dzandt/Desktop/Norway_microbiome/Figs/FigSX_Network_16SandITS_rhizo.png", prow.rhizo,
+#          ncol = 2.5, nrow = 2.5, base_aspect_ratio = 1.5, dpi=600)
+
+prow.root <- plot_grid(p.root, labels=c("B"), align="hv", label_size=12, vjust=1.1, rel_heights = c(1,2))
+#save_plot("C:/Users/dzandt/Desktop/Norway_microbiome/Figs/FigSX_Network_16SandITS_root.png", prow.root,
+#          ncol = 2.5, nrow = 2.5, base_aspect_ratio = 1.5, dpi=600)
+
+
+#Get ASVs in df
+clusters_rhizo <- data.frame(modules.rhizo$names, modules.rhizo$membership)
+colnames(clusters_rhizo) <- c("ASV", "cluster")
+
+clusters_root <- data.frame(modules.root$names, modules.root$membership)
+colnames(clusters_root) <- c("ASV", "cluster")
+
+#Merge to taxonomy
+tax.rhizo
+tax.rhizo$ASV <- ASV_names_rhizo$ASV
+clusters_rhizo <- merge(clusters_rhizo, tax.rhizo, by = "ASV")
+
+tax.root
+tax.root$ASV <- ASV_names_root$ASV
+clusters_root <- merge(clusters_root, tax.root, by = "ASV")
+
+#Have a look
+View(clusters_rhizo)
+View(clusters_root)
+
+#Save
+#save(clusters_rhizo, file="clusters_together_rhizo_sam6_thresh0.05_rep300_lam45_all.Rda")
+#save(clusters_root, file="clusters_together_root_sam6_thresh0.05_rep300_lam_45_all.Rda")

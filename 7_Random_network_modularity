@@ -1,0 +1,177 @@
+rm(list=ls())
+getwd()
+setwd("C:/Users/dzandt/Desktop/Norway_microbiome") #PC RU
+
+#Load packages
+library(microbiome) # data analysis and visualisation
+library(phyloseq) # also the basis of data object. Data analysis and visualisation
+library(RColorBrewer) # nice color options
+library(ggpubr) # publication quality figures, based on ggplot2
+library(dplyr) # data handling
+library(SpiecEasi) # Network analysis for sparse compositional data  
+library(network)
+library(intergraph)
+#devtools::install_github("briatte/ggnet")
+library(ggnet)
+library(igraph)
+library(microbiomeutilities)
+library(pulsar)
+library(data.table)
+
+#Data
+#For rhizosphere
+load("rhizo_physeq_s_16S.RDa")
+load("rhizo_physeq_s_ITS.RDa")
+
+#For root
+load("root_physeq_s_16S.RDa")
+load("root_physeq_s_ITS.RDa")
+
+#Are the samples in the same order for 16S and ITS?
+colnames(otu_table(rhizo_physeq_s_16S))
+colnames(otu_table(rhizo_physeq_s_ITS))
+colnames(otu_table(root_physeq_s_16S))
+colnames(otu_table(root_physeq_s_ITS))
+#Yes, but there is one samples missing more in the ITS matrix rhizo --> RAM.S3
+#There is one more missing in the 16S matrix for root --> VIK.R.8
+sample_data(rhizo_physeq_s_16S)
+rhizo_physeq_s_16S <- subset_samples(rhizo_physeq_s_16S, sample.code != "RAM.S3")
+sample_data(root_physeq_s_ITS)
+root_physeq_s_ITS <- subset_samples(root_physeq_s_ITS, sample.code != "VIK.R.8")
+
+#Load networks
+load("net.rhizo.mb.together.nlam45.thresh0.05_rep300_sam6_blk1contam_8reps_all.Rda")
+load("net.root.mb.together.nlam45.thresh0.05_rep300_sam6_blk1contam_8reps_all.Rda")
+
+#Create igraph objects with edge weights
+#Extract edge weights
+rhizo_temp <- symBeta(getOptBeta(network_rhizo_together), mode="maxabs")
+rhizo_weight <- Matrix::summary(t(rhizo_temp))[,3]
+
+root_temp <- symBeta(getOptBeta(network_root_together), mode="maxabs")
+root_weight <- Matrix::summary(t(root_temp))[,3]
+
+#Extract ASV names
+#Rhizosphere
+temp <- c(list(taxa_names(rhizo_physeq_s_16S)), list(taxa_names(rhizo_physeq_s_ITS)))
+temp2 <- melt(temp)
+dtype_rhizo <- c(rep(1,ntaxa(rhizo_physeq_s_16S)), rep(2,ntaxa(rhizo_physeq_s_ITS)))
+temp2$dtype <- dtype_rhizo
+str(temp2)
+temp2$group <- plyr::revalue(factor(temp2$dtype), c("1" = "16S", "2" = "ITS"))
+temp2$ASV <- paste(temp2$value, temp2$group, sep = "_")
+ASV_names_rhizo <- temp2
+
+#Root
+temp <- c(list(taxa_names(root_physeq_s_16S)), list(taxa_names(root_physeq_s_ITS)))
+temp2 <- melt(temp)
+dtype_root <- c(rep(1,ntaxa(root_physeq_s_16S)), rep(2,ntaxa(root_physeq_s_ITS)))
+temp2$dtype <- dtype_root
+str(temp2)
+temp2$group <- plyr::revalue(factor(temp2$dtype), c("1" = "16S", "2" = "ITS"))
+temp2$ASV <- paste(temp2$value, temp2$group, sep = "_")
+ASV_names_root <- temp2
+
+#Create igraph objects
+ig2.rhizo <- adj2igraph(getRefit(network_rhizo_together),diag=TRUE,
+                        edge.attr=list(weight=rhizo_weight),
+                        vertex.attr=list(name=ASV_names_rhizo$ASV))
+
+ig2.root <- adj2igraph(getRefit(network_root_together),diag=TRUE,
+                       edge.attr=list(weight=root_weight),
+                       vertex.attr=list(name=ASV_names_root$ASV))
+
+
+#Null model comparison
+library(robin) #for the random function
+
+#Run modularity against null model rhizosphere
+rhizo_null_mod <- list()
+
+for (i in 1:1000) { #use 1000 iterations, but test with ~3 first to test loop
+  
+  null_rhizo <- random(ig2.rhizo)
+  clusters_null_rhizo <- cluster_spinglass(null_rhizo, implementation = 'neg')
+  rhizo_null_mod[[paste(i)]] <- clusters_null_rhizo$modularity
+  print(i)
+  
+}
+
+rhizo_null_mod
+#rhizo observed modularity: 0.4225523
+
+temp <- reshape2::melt(rhizo_null_mod)
+head(temp)
+colnames(temp) <- c("modularity", "iteration")
+modularity_rhizo_null_model <- temp
+#save(modularity_rhizo_null_model, file = "modularity_rhizo_null_model.Rda")
+
+#Run modularity against null model root
+root_null_mod <- list()
+
+for (i in 1:1000) { #use 1000 iterations, but test with ~3 first to test loop
+  
+  null_root <- random(ig2.root)
+  clusters_null_root <- cluster_spinglass(null_root, implementation = 'neg')
+  root_null_mod[[paste(i)]] <- clusters_null_root$modularity
+  print(i)
+  
+}
+
+root_null_mod
+#root observed modularity: 0.4022431
+
+temp <- reshape2::melt(root_null_mod)
+head(temp)
+colnames(temp) <- c("modularity", "iteration")
+modularity_root_null_model <- temp
+#save(modularity_root_null_model, file = "modularity_root_null_model.Rda")
+
+#Load previous results
+load("modularity_rhizo_null_model.Rda")
+load("modularity_root_null_model.Rda")
+
+#Merge the two fungal random results
+modularity_rhizo_null_model$compartment <- "Rhizosphere"
+modularity_root_null_model$compartment <- "Root"
+modularity_null_model <- rbind(modularity_rhizo_null_model, modularity_root_null_model)
+modularity_null_model$compartment <- factor(modularity_null_model$compartment, levels = c("Rhizosphere", "Root"))
+
+#Make distribution figures
+plot <- ggplot(modularity_null_model, aes(x=modularity, colour = compartment)) + 
+  geom_density(size=0.8) +
+  scale_colour_manual(values=c("#009E73", "#E69F00")) + 
+  scale_fill_manual(values=c("#009E73", "#E69F00")) +
+  geom_vline(xintercept = 0.4022431, colour = "#E69F00", size=2) + 
+  geom_vline(xintercept = 0.4225523, colour = "#009E73", size=2) + 
+  xlab("Clustering coefficient") + 
+  ylab("Frequency") +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme_bw() +
+  theme(axis.title.y=element_text(size=15, colour = "black",margin=(margin(0,10,0,0))))+
+  theme(axis.title.x=element_text(size=15, colour = "black", margin=(margin(10,0,0,0))))+
+  theme(axis.text=element_text(size=12))+
+  theme(plot.title = element_text(size=15, face="bold"))+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.major = element_blank())+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.major = element_blank())
+
+plot
+
+#Save plot
+library(cowplot)
+prow <- plot_grid(plot, 
+                  labels=c(""), ncol=1, nrow=1, align="hv", label_size=12, vjust=1.1)
+prow
+
+#save_plot("C:/Users/dzandt/Desktop/Norway_microbiome/Figs/FigSX_null_model_16SITStogether.png", prow,
+#          ncol = 1, nrow = 1, base_aspect_ratio = 3, dpi=600)
+
+
+#Calculate significance
+#Number of cases that modularity of random networks was above/below (see density figure) modularity value of real network
+#After Yenni et al. 2017, Global Ecology and Biogeography, 26(5) and in 't Zandt et al. 2021, JEcol 109(3)
+head(modularity_rhizo_null_model)
+sum(modularity_rhizo_null_model$modularity > 0.4225523)/1000 #never the case in random network
+sum(modularity_root_null_model$modularity > 0.4022431)/1000 #never the case in random network

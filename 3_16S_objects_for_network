@@ -1,0 +1,190 @@
+rm(list=ls())
+getwd()
+setwd("C:/Users/dzandt/Desktop/Norway_microbiome") #PC RU
+
+#Install packages
+#Only once:
+#Install Rtools via https://cran.r-project.org/bin/windows/Rtools/index.html
+#writeLines('PATH="${RTOOLS40_HOME}\\usr\\bin;${PATH}"', con = "~/.Renviron")
+#restart R session
+#Sys.which("make") #to check whether it works
+#good to go
+
+#Load packages
+library(microbiome) # data analysis and visualisation
+library(phyloseq) # also the basis of data object. Data analysis and visualisation
+library(RColorBrewer) # nice color options
+library(ggpubr) # publication quality figures, based on ggplot2
+library(dplyr) # data handling
+library(SpiecEasi) # Network analysis for sparse compositional data  
+library(network)
+library(intergraph)
+#devtools::install_github("briatte/ggnet")
+library(ggnet)
+library(igraph)
+library(microbiomeutilities)
+library(pulsar)
+library(data.table)
+
+#Read in 16S data
+count_tab <- read.table("ASVs_counts_nohit_nochloro_nomito_nocontam_16S_blk1contam.tsv", sep="\t",header=T, row.names=1)[ , -c(61:62, 183:184)] #removes the blank samples
+tax_tab <- as.matrix(read.table("ASVs_taxonomy_nohit_nochloro_nomito_nocontam_16S_blk1contam.tsv", header=T, row.names=1, sep="\t"))
+sample_info_tab <- read.table("sample_info_both.txt", sep="\t",header=T)
+soil_chem <- read.table("soil_chemistry_both.txt", sep="\t",header=T)
+load("Climate2.0.Rda")
+colnames(Climate)
+load("Mveg_2019.RDa")
+colnames(Mveg)
+load("dataHeight_2019.RDa")
+colnames(dataHeight)
+load("dataCover_2019.RDa")
+colnames(dataCover)
+
+#Make transformations in soil chem data
+soil_chem$tNH4 <- log(soil_chem$NH4+0.001)
+soil_chem$tNO3 <- log(soil_chem$NO3+0.001)
+soil_chem$tC <- sqrt(soil_chem$C)
+soil_chem$tCa <- log(soil_chem$Ca)
+soil_chem$tMg <- log(soil_chem$Mg)
+soil_chem$tK <- log(soil_chem$K)
+soil_chem$tP <- log(soil_chem$P)
+
+#Calculate total reads
+df <- data.frame(rowSums(t(count_tab)))
+colnames(df) <- c("total_reads")
+df$sample.code <- row.names(df)
+
+#Merge with alpha div and SI
+load("SI_16S_both_rare_noprune.RDa")
+load("adiv_16S_both.RDa")
+head(SI_16S)
+head(adiv_16S)
+SI <- SI_16S[, c(1,3)]
+adiv <- adiv_16S[, c(1:3)]
+temp <- merge(df, SI, id = c("sample.code"), all=T)
+temp2 <- merge(temp, adiv, id = c("sample.code"), all=T)
+temp3 <- merge(soil_chem, temp2, id = c("sample.code"), all=T)
+temp3$Treatment <- NULL
+temp3$Compartment <- NULL
+#temp <- merge(df, soil_chem, id = c("sample.code"), all=T)
+
+#Merge soil chemistry to sample info tab
+sample_info_tab <- merge(sample_info_tab, temp3, id = c("sample.code"), all=T)
+row.names(sample_info_tab) <- sample_info_tab$sample.code
+
+#Add climate variables to sample info
+head(Climate)
+head(sample_info_tab)
+sample_info_tab <- merge(sample_info_tab, Climate, by = c("location"), all = T)
+
+#Merge to vegetation cover
+sample_info_tab <- merge(sample_info_tab, Mveg, by = c("T.grid", "P.grid", "location", "siteID"), all = T)
+
+#Merge to height and moss cover
+sample_info_tab <- merge(sample_info_tab, dataHeight[,-c(1:8)], by = c("location"), all = T)
+sample_info_tab <- merge(sample_info_tab, dataCover[,-c(1)], by = c("location"), all = T)
+head(sample_info_tab)
+
+#Check tables
+str(count_tab)
+str(tax_tab)
+str(sample_info_tab)
+sample_info_tab$precipitation <- as.numeric(sample_info_tab$precipitation)
+sample_info_tab$treatment <- factor(paste(sample_info_tab$precipitation, sample_info_tab$temperature, sep = "_"))
+sample_info_tab$comp_treat <- factor(paste(sample_info_tab$compartment, sample_info_tab$treatment, sep = "_"))
+
+#Match count table column order to order in sample info tab
+row.names(sample_info_tab) <- sample_info_tab$sample.code
+colnames(count_tab)
+setcolorder(count_tab, as.character(row.names(sample_info_tab)))
+
+#Add colours
+levels(sample_info_tab$treatment)
+sample_info_tab$colour <- revalue(sample_info_tab$treatment, c("600_10.5" = "#D55E00", "600_8.5" = "red", "600_6.5" = "#CC79A7",
+                                                               "1200_10.5" = "#E69F00", "1200_8.5" = "orange", "1200_6.5" = "#F0E442",
+                                                               "2000_10.5" = "#009E73", "2000_8.5" = "#33CC33", "2000_6.5" = "#99FF66",
+                                                               "2700_10.5" = "#0072B2", "2700_8.5" = "blue", "2700_6.5" = "#56B4E9"))
+sample_info_tab$colour_precip <- revalue(factor(sample_info_tab$precipitation), c("600" = "#D55E00", "1200" = "#E69F00", "2000" = "#009E73", "2700" = "#0072B2"))
+sample_info_tab$colour_temp <- revalue(factor(sample_info_tab$temperature), c("10.5" = "#D55E00", "8.5" = "#009E73", "6.5" = "#0072B2"))
+
+#Make phyloseq object
+count_tab_phy <- otu_table(count_tab, taxa_are_rows=T)
+tax_tab_phy <- tax_table(tax_tab)
+sample_info_tab_phy <- sample_data(sample_info_tab)
+ASV_physeq <- phyloseq(count_tab_phy, tax_tab_phy, sample_info_tab_phy)
+
+#Prune taxa
+ps <- prune_taxa(taxa_sums(ASV_physeq) > 100, ASV_physeq)
+ASV_physeq <- ps
+
+#Calculate sample sums to add to sample info
+tot_reads <- data.frame(sample_sums(ASV_physeq))
+str(tot_reads)
+#save(tot_reads, file="tot_reads_16S.txt")
+
+#Remove samples below 1000 reads
+sum(sample_sums(ASV_physeq)<1000) #0
+sum(sample_sums(ASV_physeq)<2000) #0
+
+#Remove GUD.6 as it is likely not Festuca
+#Remove VIK.R.8 as it is much too close to rhizosphere soil samples = outlier
+ps <- subset_samples(ASV_physeq, !sample.code %in% c("GUD.S6", "GUD.R.6", "VIK.R.8"))
+ASV_physeq <- ps
+
+#Remove replicates 9 and 10, because this was a different batch and they are really weird
+temp <- subset_samples(ASV_physeq, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".S", 9))
+temp2 <- subset_samples(temp, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".S", 10))
+temp3 <- subset_samples(temp2, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".R.", 9))
+temp4 <- subset_samples(temp3, !sample.code %in% paste0(c(unique(sample_info_tab$location), "ULV2"), ".R.", 10))
+ASV_physeq <- temp4
+
+#Make clr physeq objects
+#clr transformation
+clr_counts <- microbiome::transform(otu_table(ASV_physeq), "clr")
+clr_count_phy <- otu_table(clr_counts, taxa_are_rows=T)
+clr_physeq <- phyloseq(clr_count_phy, sample_info_tab_phy)
+clr_count_phy6 <- otu_table(clr_counts+6, taxa_are_rows=T)
+clr_physeq6 <- phyloseq(clr_count_phy6, sample_info_tab_phy)
+
+#Subset into rhizo and root samples
+rhizo_physeq <- subset_samples(ASV_physeq, compartment == "rhizosphere")
+root_physeq <- subset_samples(ASV_physeq, compartment == "root")
+
+#Rhizo
+#Create prevalence table per ASV
+prevelancedf_rhizo = apply(X = otu_table(rhizo_physeq),
+                           MARGIN = 1,
+                           FUN = function(x){sum(x > 0)})
+prevelancedf_rhizo = data.frame(Prevalence = prevelancedf_rhizo,
+                                TotalAbundance = taxa_sums(rhizo_physeq),
+                                tax_table(rhizo_physeq))
+prevelancedf1_rhizo = subset(prevelancedf_rhizo, phylum %in% get_taxa_unique(rhizo_physeq, taxonomic.rank = "phylum"))
+keepTaxa_rhizo = rownames(prevelancedf1_rhizo)[(prevelancedf1_rhizo$Prevalence >= 6)]
+length(keepTaxa_rhizo)
+rhizo_physeq_s = prune_taxa(keepTaxa_rhizo, rhizo_physeq)
+
+#Root
+#Create prevalence table per ASV
+prevelancedf_root = apply(X = otu_table(root_physeq),
+                          MARGIN = 1,
+                          FUN = function(x){sum(x > 0)})
+prevelancedf_root = data.frame(Prevalence = prevelancedf_root,
+                               TotalAbundance = taxa_sums(root_physeq),
+                               tax_table(root_physeq))
+prevelancedf1_root = subset(prevelancedf_root, phylum %in% get_taxa_unique(root_physeq, taxonomic.rank = "phylum"))
+keepTaxa_root = rownames(prevelancedf1_root)[(prevelancedf1_root$Prevalence >= 6)]
+length(keepTaxa_root)
+root_physeq_s = prune_taxa(keepTaxa_root, root_physeq)
+
+#Save
+asv.rhizo <- t(otu_table(rhizo_physeq_s)@.Data) #extract the otu table from phyloseq object
+tax.rhizo <- as.data.frame(tax_table(rhizo_physeq_s)@.Data)#extract the taxonomy information
+
+asv.root <- t(otu_table(root_physeq_s)@.Data) #extract the otu table from phyloseq object
+tax.root <- as.data.frame(tax_table(root_physeq_s)@.Data)#extract the taxonomy information
+
+#Save
+rhizo_physeq_s_16S <- rhizo_physeq_s
+#save(rhizo_physeq_s_16S, file = "rhizo_physeq_s_16S.RDa")
+root_physeq_s_16S <- root_physeq_s
+#save(root_physeq_s_16S, file = "root_physeq_s_16S.RDa")

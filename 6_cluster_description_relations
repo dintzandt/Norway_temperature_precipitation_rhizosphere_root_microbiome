@@ -1,0 +1,1400 @@
+rm(list=ls())
+getwd()
+setwd("C:/Users/dzandt/Desktop/Norway_microbiome") #PC RU
+
+library("phyloseq")
+library("vegan")
+library("DESeq2")
+library("ggplot2")
+library("dendextend")
+library("tidyr")
+library("viridis")
+library("reshape")
+library("plyr")
+library("stringr")
+library("metagMisc")
+library("igraph")
+library(cowplot)
+library(car)
+library(nlme)
+library(sjstats)
+
+#Read in physeq data for rhizosphere
+load("rhizo_physeq_s_16S.RDa")
+load("rhizo_physeq_s_ITS.RDa")
+
+#For root
+load("root_physeq_s_16S.RDa")
+load("root_physeq_s_ITS.RDa")
+
+#Are the samples in the same order for 16S and ITS?
+colnames(otu_table(rhizo_physeq_s_16S))
+colnames(otu_table(rhizo_physeq_s_ITS))
+colnames(otu_table(root_physeq_s_16S))
+colnames(otu_table(root_physeq_s_ITS))
+#Yes, but there is one samples missing more in the ITS matrix rhizo --> RAM.S3
+#There is one more missing in the 16S matrix for root --> VIK.R.8
+sample_data(rhizo_physeq_s_16S)
+rhizo_physeq_s_16S <- subset_samples(rhizo_physeq_s_16S, sample.code != "RAM.S3")
+sample_data(root_physeq_s_ITS)
+root_physeq_s_ITS <- subset_samples(root_physeq_s_ITS, sample.code != "VIK.R.8")
+
+#Make relative abundance physeq objects
+#compositional transformation
+rel_rhizo_16S <- microbiome::transform(otu_table(rhizo_physeq_s_16S), "compositional")
+rel_rhizo_ITS <- microbiome::transform(otu_table(rhizo_physeq_s_ITS), "compositional")
+rel_root_16S <- microbiome::transform(otu_table(root_physeq_s_16S), "compositional")
+rel_root_ITS <- microbiome::transform(otu_table(root_physeq_s_ITS), "compositional")
+
+#Add _16S and _ITS to ASVs, then merge
+row.names(rel_rhizo_16S) <- paste(row.names(rel_rhizo_16S), "16S", sep = "_")
+row.names(rel_rhizo_ITS) <- paste(row.names(rel_rhizo_ITS), "ITS", sep = "_")
+row.names(rel_root_16S) <- paste(row.names(rel_root_16S), "16S", sep = "_")
+row.names(rel_root_ITS) <- paste(row.names(rel_root_ITS), "ITS", sep = "_")
+
+rel_rhizo <- rbind(rel_rhizo_16S, rel_rhizo_ITS)
+rel_root <- rbind(rel_root_16S, rel_root_ITS)
+
+#Add taxonomy with clusters to rel physeq
+rel_count_phy_rhizo <- otu_table(rel_rhizo, taxa_are_rows=T)
+load("clusters_together_rhizo_sam6_thresh0.05_rep300_lam45_all.RDa")
+row.names(clusters_rhizo) <- clusters_rhizo$ASV
+tax_tab_rhizo <- tax_table(as.matrix(clusters_rhizo))
+head(tax_tab_rhizo)
+sample_info_tab_rhizo <- sample_data(rhizo_physeq_s_16S)
+rel_physeq_rhizo <- phyloseq(rel_count_phy_rhizo, tax_tab_rhizo, sample_info_tab_rhizo)
+
+rel_count_phy_root <- otu_table(rel_root, taxa_are_rows=T)
+load("clusters_together_root_sam6_thresh0.05_rep300_lam_45_all.RDa")
+row.names(clusters_root) <- clusters_root$ASV
+tax_tab_root <- tax_table(as.matrix(clusters_root))
+head(tax_tab_root)
+sample_info_tab_root <- sample_data(root_physeq_s_16S)
+rel_physeq_root <- phyloseq(rel_count_phy_root, tax_tab_root, sample_info_tab_root)
+
+#To long format
+temp_rhizo <- data.frame(rel_rhizo)
+temp_rhizo$ASV <- rownames(temp_rhizo)
+temp_rhizo <- melt(temp_rhizo)
+colnames(temp_rhizo) <- c("ASV", "sample", "rel_reads")
+head(sample_info_tab_rhizo)
+sample_info_tab_rhizo$sample <- rownames(sample_info_tab_rhizo)
+sample_info_tab_rhizo_df <- data.frame(sample_info_tab_rhizo)
+temp2_rhizo <- merge(temp_rhizo, sample_info_tab_rhizo_df, by = c("sample"), all=T)
+temp3_rhizo <- merge(temp2_rhizo, clusters_rhizo, by = c("ASV"), all=T)
+head(temp3_rhizo)
+Data_rhizo <- temp3_rhizo
+
+temp_root <- data.frame(rel_root)
+temp_root$ASV <- rownames(temp_root)
+temp_root <- melt(temp_root)
+colnames(temp_root) <- c("ASV", "sample", "rel_reads")
+sample_info_tab_root$sample <- rownames(sample_info_tab_root)
+sample_info_tab_root_df <- data.frame(sample_info_tab_root)
+temp2_root <- merge(temp_root, sample_info_tab_root_df, by = c("sample"), all=T)
+temp3_root <- merge(temp2_root, clusters_root, by = c("ASV"), all=T)
+head(temp3_root)
+Data_root <- temp3_root
+
+#Sum relreads per cluster
+colnames(Data_rhizo)
+library(plyr)
+MRel_rhizo_cluster <- ddply(Data_rhizo, c("sample", "replicate", "location", "temperature", "precipitation",
+                                          "cluster"), summarise,
+                            sumrelreads = sum(rel_reads, na.rm=TRUE)
+)
+
+head(MRel_rhizo_cluster)
+
+colnames(Data_root)
+MRel_root_cluster <- ddply(Data_root, c("sample", "replicate", "location", "temperature", "precipitation",
+                                          "cluster"), summarise,
+                            sumrelreads = sum(rel_reads, na.rm=TRUE)
+)
+
+head(MRel_root_cluster)
+
+#Add soil chemical and climate variables
+colnames(sample_info_tab_rhizo)
+MRel_rhizo_cluster <- merge(MRel_rhizo_cluster, sample_info_tab_rhizo_df, by = c("sample", "replicate", "location", "precipitation", "temperature"), all=T)
+MRel_root_cluster <- merge(MRel_root_cluster, sample_info_tab_root_df, by = c("sample", "replicate", "location", "precipitation", "temperature"), all=T)
+
+#Replace some of the veg 2019 parameters with new once
+load("Mveg_2019_2.0.RDa")
+colnames(MRel_rhizo_cluster)
+MRel_rhizo_cluster <- merge(MRel_rhizo_cluster[,-c(272:276)], Mveg, by = c("elevation", "latitude", "longitude", "location", 
+                                                                           "P.grid", "T.grid", "siteID"), all=T)
+MRel_root_cluster <- merge(MRel_root_cluster[,-c(272:276)], Mveg, by = c("elevation", "latitude", "longitude", "location", 
+                                                                         "P.grid", "T.grid", "siteID"), all=T)
+
+#Make transformations
+MRel_rhizo_cluster$tmossHeight <- log(MRel_rhizo_cluster$mossHeight)
+MRel_rhizo_cluster$tforb_cover <- log(MRel_rhizo_cluster$forb_cover)
+MRel_rhizo_cluster$tgraminoid_cover <- log(MRel_rhizo_cluster$graminoid_cover)
+MRel_rhizo_cluster$tlegume_cover <- sqrt(MRel_rhizo_cluster$legume_cover)
+MRel_rhizo_cluster$themiparasite_cover <- sqrt(MRel_rhizo_cluster$hemiparasite_cover)
+MRel_rhizo_cluster$tpteridophyte_cover <- sqrt(MRel_rhizo_cluster$pteridophyte_cover)
+MRel_rhizo_cluster$twoody_cover <- sqrt(MRel_rhizo_cluster$woody_cover)
+MRel_rhizo_cluster$tlichen_cover <- sqrt(MRel_rhizo_cluster$lichen_cover)
+MRel_rhizo_cluster$ttotBryophyte_cover <- sqrt(MRel_rhizo_cluster$totBryophyte_cover)
+
+MRel_root_cluster$tmossHeight <- log(MRel_root_cluster$mossHeight)
+MRel_root_cluster$tforb_cover <- log(MRel_root_cluster$forb_cover)
+MRel_root_cluster$tgraminoid_cover <- log(MRel_root_cluster$graminoid_cover)
+MRel_root_cluster$tlegume_cover <- sqrt(MRel_root_cluster$legume_cover)
+MRel_root_cluster$themiparasite_cover <- sqrt(MRel_root_cluster$hemiparasite_cover)
+MRel_root_cluster$tpteridophyte_cover <- sqrt(MRel_root_cluster$pteridophyte_cover)
+MRel_root_cluster$twoody_cover <- sqrt(MRel_root_cluster$woody_cover)
+MRel_root_cluster$tlichen_cover <- sqrt(MRel_root_cluster$lichen_cover)
+MRel_root_cluster$ttotBryophyte_cover <- sqrt(MRel_root_cluster$totBryophyte_cover)
+
+#Add fungal trait information
+#Rhizosphere - guild_fg
+
+#Try funguildR packages
+#devtools::install_github("brendanf/FUNGuildR")
+library(FUNGuildR)
+
+#Create taxonomy dataframe
+head(tax_tab_rhizo)
+temp <- data.frame(tax_tab_rhizo)
+temp2 <- temp[which(temp$kingdom == "Fungi"),]
+temp2$Taxonomy <- paste(temp2$kingdom, temp2$phylum, temp2$class,
+                        temp2$order, temp2$family, temp2$genus, temp2$species, 
+                        sep = ";")
+rhizo_funtraits <- funguild_assign(temp2)
+head(rhizo_funtraits)
+#View(rhizo_funtraits)
+
+#Merge to rhizo and root data (ASVs for rhizo and root are matched)
+colnames(Data_rhizo)
+colnames(rhizo_funtraits)
+colnames(rhizo_funtraits)[2] <- "cluster_funguild"
+Data_rhizo_traits <- merge(Data_rhizo, rhizo_funtraits[,c(1,2,10:21),], by = c("ASV"), all=T)
+Data_root_traits <- merge(Data_root, rhizo_funtraits[,c(1,2,10:21),], by = c("ASV"), all=T)
+
+#Save created files
+#save(Data_rhizo_traits, file = "Data_rhizo_traits.Rda")
+#save(Data_root_traits, file = "Data_root_traits.Rda")
+#save(Data_rhizo, file = "Data_rhizo.Rda")
+#save(Data_root, file = "Data_root.Rda")
+
+
+#######################################END OF DATA HANDLING##################################################
+#################################0 BASIC PLOTS WITH REL ABUNDANCE PER CLUSTER######################################
+load("Data_rhizo_traits.Rda")
+load("Data_root_traits.Rda")
+
+#Make colour pallette
+pbcolour <- c("#A6CEE3", "#1F78B4", "#B2DF8A", "#33A02C", "#FB9A99", "#E31A1C", "#FDBF6F", "#FF7F00",
+              "#CAB2D6", "#6A3D9A", "#FFFF99", "#B15928", "grey50", "grey", "black", "pink", "yellow", "blue",
+              "red", "purple", "orange", "darkgreen")
+
+######A RHIZOSPHERE#####
+#Make prokaryote and fungi column
+Data_rhizo$group <- factor(revalue(Data_rhizo$kingdom, c("Bacteria" = "16S", "Archaea" = "16S", 
+                                                         "Fungi" = "ITS")))
+
+#Sum per cluster per sample per group
+SCount_rhizo <- ddply(Data_rhizo, c("sample", "cluster", "family", "group"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE)
+)
+SCount_rhizo
+
+temp_rhizo <- ddply(SCount_rhizo, c("cluster", "family", "group"), summarise,
+                    mrelreads = mean(srelreads*100/2, na.rm=TRUE)
+)
+temp_rhizo
+
+temp_rhizo$family[which(temp_rhizo$family == "" | is.na(temp_rhizo$family))] <- "unknown"
+
+#Define 'other' if the total rel read is below 1.5
+#Calculate total rel read for each family, then set low abundance families to 'other'
+sum_mrelreads_fam <- list()
+
+for (i in temp_rhizo$family) {
+  sum_mrelreads_fam[[paste(i)]] <- sum(temp_rhizo$mrelreads[which(temp_rhizo$family == i)])
+  
+}
+
+temp <- melt(sum_mrelreads_fam)
+colnames(temp) <- c("sum_mrelreads_fam", "family")
+temp_rhizo <- merge(temp_rhizo, temp, by = c("family"), all = T)
+range(temp_rhizo$sum_mrelreads_fam)
+temp_rhizo$family[which(temp_rhizo$sum_mrelreads_fam < 1)] <- "other"
+
+#Subset
+temp_rhizo_16S <- temp_rhizo[which(temp_rhizo$group == "16S"),]
+temp_rhizo_ITS <- temp_rhizo[which(temp_rhizo$group == "ITS"),]
+
+#16S
+plotA <- ggplot(temp_rhizo_16S, aes(x=cluster, y=mrelreads, fill=family)) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  theme(legend.title=element_blank()) +
+  labs(x="Network cluster", y="% of 16S rRNA read numbers recovered", title="Rhizosphere prokaryotes")+
+  scale_fill_manual(values = pbcolour)+
+  scale_x_continuous(breaks=seq(1,18,1))+
+  coord_cartesian(ylim = c(0,22))
+plotA
+
+#ITS
+plotB <- ggplot(temp_rhizo_ITS, aes(x=cluster, y=mrelreads, fill=family)) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  theme(legend.title=element_blank()) +
+  labs(x="Network cluster", y="% of ITS rRNA read numbers recovered", title="Rhizosphere fungi")+
+  scale_fill_manual(values = pbcolour)+
+  scale_x_continuous(breaks=seq(1,18,1))+
+  coord_cartesian(ylim = c(0,22))
+plotB
+
+#Total per cluster
+tot_rhizo <- ddply(temp_rhizo, c("cluster"), summarise,
+                   totmrelreads = sum(mrelreads, na.rm=TRUE))
+tot_rhizo
+temp_rhizo <- merge(temp_rhizo, tot_rhizo, by = c("cluster"))
+temp_rhizo$relcluster <- (temp_rhizo$mrelreads/temp_rhizo$totmrelreads)*100
+temp_rhizo$family[which(temp_rhizo$relcluster < 5)] <- "other"
+temp_rhizo[which(temp_rhizo$cluster == 7),]
+
+#Check on genus level
+#Sum per cluster per sample per group
+SCount_rhizo <- ddply(Data_rhizo, c("sample", "cluster", "genus", "group"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE)
+)
+SCount_rhizo
+
+temp_rhizo <- ddply(SCount_rhizo, c("cluster", "genus", "group"), summarise,
+                    mrelreads = mean(srelreads*100/2, na.rm=TRUE)
+)
+temp_rhizo
+
+temp_rhizo$family[which(temp_rhizo$genus == "" | is.na(temp_rhizo$genus))] <- "unknown"
+
+#Total per cluster
+tot_rhizo <- ddply(temp_rhizo, c("cluster"), summarise,
+                   totmrelreads = sum(mrelreads, na.rm=TRUE))
+tot_rhizo
+temp_rhizo <- merge(temp_rhizo, tot_rhizo, by = c("cluster"))
+temp_rhizo$relcluster <- (temp_rhizo$mrelreads/temp_rhizo$totmrelreads)*100
+temp_rhizo$genus[which(temp_rhizo$relcluster < 5)] <- "other"
+temp_rhizo[which(temp_rhizo$cluster == 7),]
+
+
+#####ROOT#####
+#Make prokaryote and fungi column
+Data_root$group <- factor(revalue(Data_root$kingdom, c("Bacteria" = "16S", "Archaea" = "16S", 
+                                                         "Fungi" = "ITS")))
+
+#Sum per cluster per sample per group
+SCount_root <- ddply(Data_root, c("sample", "cluster", "family", "group"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE)
+)
+SCount_root
+
+temp_root <- ddply(SCount_root, c("cluster", "family", "group"), summarise,
+                    mrelreads = mean(srelreads*100/2, na.rm=TRUE)
+)
+temp_root
+
+temp_root$family[which(temp_root$family == "" | is.na(temp_root$family))] <- "unknown"
+
+#Define 'other' if the total rel read is below 1.5
+#Calculate total rel read for each family, then set low abundance families to 'other'
+sum_mrelreads_fam <- list()
+
+for (i in temp_root$family) {
+  sum_mrelreads_fam[[paste(i)]] <- sum(temp_root$mrelreads[which(temp_root$family == i)])
+  
+}
+
+temp <- melt(sum_mrelreads_fam)
+colnames(temp) <- c("sum_mrelreads_fam", "family")
+temp_root <- merge(temp_root, temp, by = c("family"), all = T)
+range(temp_root$sum_mrelreads_fam)
+temp_root$family[which(temp_root$sum_mrelreads_fam < 1)] <- "other"
+
+#Subset
+temp_root_16S <- temp_root[which(temp_root$group == "16S"),]
+temp_root_ITS <- temp_root[which(temp_root$group == "ITS"),]
+
+#16S
+plotC <- ggplot(temp_root_16S, aes(x=cluster, y=mrelreads, fill=family)) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  theme(legend.title=element_blank()) +
+  labs(x="Network cluster", y="% of 16S rRNA read numbers recovered", title="Root prokaryotes")+
+  scale_fill_manual(values = pbcolour)+
+  scale_x_continuous(breaks=seq(1,18,1))+
+  coord_cartesian(ylim = c(0,22))
+plotC
+
+#ITS
+plotD <- ggplot(temp_root_ITS, aes(x=cluster, y=mrelreads, fill=family)) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  theme(legend.title=element_blank()) +
+  labs(x="Network cluster", y="% of ITS rRNA read numbers recovered", title="Root fungi")+
+  scale_fill_manual(values = pbcolour)+
+  scale_x_continuous(breaks=seq(1,18,1))+
+  coord_cartesian(ylim = c(0,22))
+plotD
+
+#Total per cluster
+tot_root <- ddply(temp_root, c("cluster"), summarise,
+                   totmrelreads = sum(mrelreads, na.rm=TRUE))
+tot_root
+temp_root <- merge(temp_root, tot_root, by = c("cluster"))
+temp_root$relcluster <- (temp_root$mrelreads/temp_root$totmrelreads)*100
+temp_root$family[which(temp_root$relcluster < 5)] <- "other"
+temp_root[which(temp_root$cluster == 7),]
+
+
+#Check on genus level
+#Sum per cluster per sample per group
+SCount_root <- ddply(Data_root, c("sample", "cluster", "genus", "group"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE)
+)
+SCount_root
+
+temp_root <- ddply(SCount_root, c("cluster", "genus", "group"), summarise,
+                    mrelreads = mean(srelreads*100/2, na.rm=TRUE)
+)
+temp_root
+
+temp_root$family[which(temp_root$genus == "" | is.na(temp_root$genus))] <- "unknown"
+
+#Total per cluster
+tot_root <- ddply(temp_root, c("cluster"), summarise,
+                   totmrelreads = sum(mrelreads, na.rm=TRUE))
+tot_root
+temp_root <- merge(temp_root, tot_root, by = c("cluster"))
+temp_root$relcluster <- (temp_root$mrelreads/temp_root$totmrelreads)*100
+temp_root$genus[which(temp_root$relcluster < 5)] <- "other"
+temp_root[which(temp_root$cluster == 11),]
+
+
+#Save family plots togeter
+library(cowplot)
+prowABCD <- plot_grid(plotA, plotB, plotC, plotD,
+                   labels=c("A", "B", "C",  "D"), ncol=2, nrow=2, align="hv", label_size=12, vjust=1.1)
+prowABCD
+#save_plot("C:/Users/dzandt/Desktop/Norway_microbiome/Figs/FigS_taxonomy.png", prowAB,
+#          ncol = 2, nrow = 2, base_aspect_ratio = 1.8, dpi=600) #PC
+
+
+#Fungal traits
+Data_rhizo_traits$group <- factor(revalue(Data_rhizo_traits$kingdom, c("Bacteria" = "16S", "Archaea" = "16S", 
+                                                         "Fungi" = "ITS")))
+
+#Sum per cluster per sample
+colnames(Data_rhizo_traits)
+str(Data_rhizo_traits)
+SCount_rhizo <- ddply(Data_rhizo_traits, c("sample", "cluster", "trophicMode", "group"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE)
+)
+SCount_rhizo
+
+temp_rhizo <- ddply(SCount_rhizo, c("cluster", "trophicMode", "group"), summarise,
+                    mrelreads = mean(srelreads*100/2, na.rm=TRUE)
+)
+temp_rhizo
+
+temp_rhizo$trophicMode[which(temp_rhizo$group == "16S")] <- "Prokaryotes"
+temp_rhizo$trophicMode[which(temp_rhizo$trophicMode == "" | is.na(temp_rhizo$trophicMode))] <- "unknown"
+temp_rhizo$trophicMode <- factor(temp_rhizo$trophicMode, levels = c("Pathotroph", "Pathotroph-Saprotroph", "Pathotroph-Saprotroph-Symbiotroph", 
+                                                                    "Pathotroph-Symbiotroph", "Saprotroph", "Saprotroph-Symbiotroph", "Symbiotroph", "unknown", "Prokaryotes"))
+
+plotA_tM <- ggplot(temp_rhizo, aes(x=cluster, y=mrelreads, fill=trophicMode)) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  theme(legend.title=element_blank()) +
+  labs(x="Network cluster", y="% of 16S and ITS rRNA reads recovered", title="Rhizosphere")+
+  scale_fill_manual(values = pbcolour)+
+  scale_x_continuous(breaks=seq(1,18,1))+
+  coord_cartesian(ylim = c(0,32))
+plotA_tM
+
+#Total per cluster
+tot_rhizo <- ddply(temp_rhizo, c("cluster"), summarise,
+                   totmrelreads = sum(mrelreads, na.rm=TRUE))
+tot_rhizo
+temp_rhizo <- merge(temp_rhizo, tot_rhizo, by = c("cluster"))
+temp_rhizo$relcluster <- (temp_rhizo$mrelreads/temp_rhizo$totmrelreads)*100
+#temp_rhizo$family[which(temp_rhizo$relcluster < 5)] <- "other"
+temp_rhizo[which(temp_rhizo$cluster == 7),]
+
+#Check what the guilds do per cluster
+SCount_rhizo <- ddply(Data_rhizo_traits, c("sample", "cluster", "guild", "group"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE)
+)
+SCount_rhizo
+
+temp_rhizo <- ddply(SCount_rhizo, c("cluster", "guild", "group"), summarise,
+                    mrelreads = mean(srelreads*100/2, na.rm=TRUE)
+)
+temp_rhizo
+
+temp_rhizo$guild[which(temp_rhizo$group == "16S")] <- "Prokaryotes"
+temp_rhizo$guild[which(temp_rhizo$guild == "" | is.na(temp_rhizo$guild))] <- "unknown"
+
+#Total per cluster
+tot_rhizo <- ddply(temp_rhizo, c("cluster"), summarise,
+                   totmrelreads = sum(mrelreads, na.rm=TRUE))
+tot_rhizo
+temp_rhizo <- merge(temp_rhizo, tot_rhizo, by = c("cluster"))
+temp_rhizo$relcluster <- (temp_rhizo$mrelreads/temp_rhizo$totmrelreads)*100
+#temp_rhizo$family[which(temp_rhizo$relcluster < 5)] <- "other"
+temp_rhizo[which(temp_rhizo$cluster == 7),]
+
+
+#Root
+Data_root_traits$group <- factor(revalue(Data_root_traits$kingdom, c("Bacteria" = "16S", "Archaea" = "16S", 
+                                                                       "Fungi" = "ITS")))
+
+#Sum per cluster per sample
+colnames(Data_root_traits)
+str(Data_root_traits)
+SCount_root <- ddply(Data_root_traits, c("sample", "cluster", "trophicMode", "group"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE)
+)
+SCount_root
+
+temp_root <- ddply(SCount_root, c("cluster", "trophicMode", "group"), summarise,
+                    mrelreads = mean(srelreads*100/2, na.rm=TRUE)
+)
+temp_root
+
+temp_root$trophicMode[which(temp_root$group == "16S")] <- "Prokaryotes"
+temp_root$trophicMode[which(temp_root$trophicMode == "" | is.na(temp_root$trophicMode))] <- "unknown"
+temp_root$trophicMode <- factor(temp_root$trophicMode, levels = c("Pathotroph", "Pathotroph-Saprotroph", "Pathotroph-Saprotroph-Symbiotroph", 
+                                                                    "Pathotroph-Symbiotroph", "Saprotroph", "Saprotroph-Symbiotroph", "Symbiotroph", "unknown", "Prokaryotes"))
+
+plotB_tM <- ggplot(temp_root, aes(x=cluster, y=mrelreads, fill=trophicMode)) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  theme(legend.title=element_blank()) +
+  labs(x="Network cluster", y="% of 16S and ITS rRNA reads recovered", title="Root")+
+  scale_fill_manual(values = pbcolour)+
+  scale_x_continuous(breaks=seq(1,18,1))+
+  coord_cartesian(ylim = c(0,32))
+plotB_tM
+
+#Total per cluster
+tot_root <- ddply(temp_root, c("cluster"), summarise,
+                   totmrelreads = sum(mrelreads, na.rm=TRUE))
+tot_root
+temp_root <- merge(temp_root, tot_root, by = c("cluster"))
+temp_root$relcluster <- (temp_root$mrelreads/temp_root$totmrelreads)*100
+#temp_root$family[which(temp_root$relcluster < 5)] <- "other"
+temp_root[which(temp_root$cluster == 7),]
+
+
+#Check what the guilds do per cluster
+SCount_root <- ddply(Data_root_traits, c("sample", "cluster", "guild", "group"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE)
+)
+SCount_root
+
+temp_root <- ddply(SCount_root, c("cluster", "guild", "group"), summarise,
+                    mrelreads = mean(srelreads*100/2, na.rm=TRUE)
+)
+temp_root
+
+temp_root$guild[which(temp_root$group == "16S")] <- "Prokaryotes"
+temp_root$guild[which(temp_root$guild == "" | is.na(temp_root$guild))] <- "unknown"
+
+#Total per cluster
+tot_root <- ddply(temp_root, c("cluster"), summarise,
+                   totmrelreads = sum(mrelreads, na.rm=TRUE))
+tot_root
+temp_root <- merge(temp_root, tot_root, by = c("cluster"))
+temp_root$relcluster <- (temp_root$mrelreads/temp_root$totmrelreads)*100
+#temp_root$family[which(temp_root$relcluster < 5)] <- "other"
+temp_root[which(temp_root$cluster == 7),]
+
+
+#Save plots
+library(cowplot)
+prowAB <- plot_grid(plotA_tM, plotB_tM, 
+                    labels=c("A", "B"), ncol=2, nrow=1, align="hv", label_size=12, vjust=1.1)
+prowAB
+#save_plot("C:/Users/dzandt/Desktop/Norway_microbiome/Figs/FigS_trophicMode.png", prowAB,
+#          ncol = 2, nrow = 1, base_aspect_ratio = 1.8, dpi=600) #PC
+
+
+#Fungal growth form
+#Filter very low taxa
+#Sum per cluster per sample
+colnames(Data_rhizo_traits)
+str(Data_rhizo_traits)
+SCount_rhizo <- ddply(Data_rhizo_traits, c("sample", "cluster", "growthForm", "group"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE)
+)
+SCount_rhizo
+
+temp_rhizo <- ddply(SCount_rhizo, c("cluster", "growthForm", "group"), summarise,
+                    mrelreads = mean(srelreads*100/2, na.rm=TRUE)
+)
+temp_rhizo
+
+temp_rhizo$growthForm[which(temp_rhizo$group == "16S")] <- "Prokaryotes"
+temp_rhizo$growthForm[which(temp_rhizo$growthForm == "" | is.na(temp_rhizo$growthForm))] <- "unknown"
+temp_rhizo$growthForm[which(temp_rhizo$growthForm == "NULL" | is.na(temp_rhizo$growthForm))] <- "unknown"
+levels(factor(temp_rhizo$growthForm))
+temp_rhizo$growthForm <- factor(temp_rhizo$growthForm, levels = c("Agaricoid", "Agaricoid-Gasteroid-Microfungus-Secotioid-Yeast",
+                                                                   "Clavarioid", "Corticioid", "Facultative Yeast", "Facultative Yeast-Microfungus",                  
+                                                                   "Gasteroid-Pezizoid", "Microfungus", "Thallus",                                        
+                                                                   "unknown", "Prokaryotes"))
+
+plotA_gF <- ggplot(temp_rhizo, aes(x=cluster, y=mrelreads, fill=growthForm)) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  theme(legend.title=element_blank()) +
+  labs(x="Network cluster", y="% of 16S and ITS rRNA reads recovered", title="Rhizosphere")+
+  scale_fill_manual(values = pbcolour)+
+  scale_x_continuous(breaks=seq(1,18,1))+
+  coord_cartesian(ylim = c(0,32))
+plotA_gF
+
+#Total per cluster
+tot_rhizo <- ddply(temp_rhizo, c("cluster"), summarise,
+                   totmrelreads = sum(mrelreads, na.rm=TRUE))
+tot_rhizo
+temp_rhizo <- merge(temp_rhizo, tot_rhizo, by = c("cluster"))
+temp_rhizo$relcluster <- (temp_rhizo$mrelreads/temp_rhizo$totmrelreads)*100
+#temp_rhizo$family[which(temp_rhizo$relcluster < 5)] <- "other"
+temp_rhizo[which(temp_rhizo$cluster == 7),]
+
+#Root
+#Sum per cluster per sample
+head(Data_root_traits)
+str(Data_root_traits)
+SCount_root <- ddply(Data_root_traits, c("sample", "cluster", "growthForm", "group"), summarise,
+                     srelreads = sum(rel_reads, na.rm=TRUE)
+)
+SCount_root
+
+temp_root <- ddply(SCount_root, c("cluster", "growthForm", "group"), summarise,
+                   mrelreads = mean(srelreads*100/2, na.rm=TRUE)
+)
+temp_root
+
+temp_root$growthForm[which(temp_root$group == "16S")] <- "Prokaryotes"
+temp_root$growthForm[which(temp_root$growthForm == "" | is.na(temp_root$growthForm))] <- "unknown"
+temp_root$growthForm[which(temp_root$growthForm == "NULL" | is.na(temp_root$growthForm))] <- "unknown"
+levels(factor(temp_root$growthForm))
+temp_root$growthForm <- factor(temp_root$growthForm, levels = c("Agaricoid", "Agaricoid-Gasteroid-Microfungus-Secotioid-Yeast",
+                                                                  "Clavarioid", "Corticioid", "Facultative Yeast", "Facultative Yeast-Microfungus",                  
+                                                                  "Gasteroid-Pezizoid", "Microfungus", "Thallus",                                        
+                                                                  "unknown", "Prokaryotes"))
+
+plotB_gF <- ggplot(temp_root, aes(x=cluster, y=mrelreads, fill=growthForm)) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  theme(legend.title=element_blank()) +
+  labs(x="Network cluster", y="% of 16S and ITS rRNA reads recovered", title="Root")+
+  scale_fill_manual(values = pbcolour)+
+  scale_x_continuous(breaks=seq(1,18,1))+
+  coord_cartesian(ylim = c(0,32))
+plotB_gF
+
+#Total per cluster
+tot_root <- ddply(temp_root, c("cluster"), summarise,
+                  totmrelreads = sum(mrelreads, na.rm=TRUE))
+tot_root
+temp_root <- merge(temp_root, tot_root, by = c("cluster"))
+temp_root$relcluster <- (temp_root$mrelreads/temp_root$totmrelreads)*100
+#temp_root$family[which(temp_root$relcluster < 5)] <- "other"
+temp_root[which(temp_root$cluster == 11),]
+
+#Save plots
+library(cowplot)
+prowAB <- plot_grid(plotA_gF, plotB_gF, 
+                    labels=c("A", "B"), ncol=2, nrow=1, align="hv", label_size=12, vjust=1.1)
+prowAB
+#save_plot("C:/Users/dzandt/Desktop/Norway_microbiome/Figs/FigS_growthForm.png", prowAB,
+#          ncol = 2, nrow = 1, base_aspect_ratio = 1.8, dpi=600) #PC
+
+
+#####################################DESCRIBE CLUSTERS############################################
+#Prokaryote:fungi ratio
+#Rhizosphere
+head(MRel_rhizo_cluster)
+head(Data_rhizo)
+
+SCount_rhizo <- ddply(Data_rhizo, c("sample", "cluster", "kingdom"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE)
+)
+SCount_rhizo
+
+temp_rhizo <- ddply(SCount_rhizo, c("cluster", "kingdom"), summarise,
+                    mrelreads = mean(srelreads*100, na.rm=TRUE)
+)
+temp_rhizo
+
+tot_rhizo <- ddply(temp_rhizo, c("cluster"), summarise,
+                  totmrelreads = sum(mrelreads, na.rm=TRUE))
+tot_rhizo
+
+temp_rhizo <- merge(temp_rhizo, tot_rhizo, by = c("cluster"))
+temp_rhizo$relcluster <- (temp_rhizo$mrelreads/temp_rhizo$totmrelreads)*100
+temp_rhizo
+
+#Root
+head(MRel_root_cluster)
+head(Data_root)
+
+SCount_root <- ddply(Data_root, c("sample", "cluster", "kingdom"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE)
+)
+SCount_root
+
+temp_root <- ddply(SCount_root, c("cluster", "kingdom"), summarise,
+                    mrelreads = mean(srelreads*100, na.rm=TRUE)
+)
+temp_root
+
+tot_root <- ddply(temp_root, c("cluster"), summarise,
+                   totmrelreads = sum(mrelreads, na.rm=TRUE))
+tot_root
+
+temp_root <- merge(temp_root, tot_root, by = c("cluster"))
+temp_root$relcluster <- (temp_root$mrelreads/temp_root$totmrelreads)*100
+temp_root
+
+#Total relative cluster size
+#Rhizosphere
+vsize_rhizo <- ddply(SCount_rhizo, c("cluster"), summarise,
+                    mrelreads = sum(srelreads, na.rm=TRUE))
+vsize_rhizo$relcluster <- vsize_rhizo$mrelreads / sum(vsize_rhizo$mrelreads)
+vsize_rhizo
+
+#Root
+vsize_root <- ddply(SCount_root, c("cluster"), summarise,
+                     mrelreads = sum(srelreads, na.rm=TRUE))
+vsize_root$relcluster <- vsize_root$mrelreads / sum(vsize_root$mrelreads)
+vsize_root
+
+#Number of unique ASVs
+#Rhizosphere
+temp <- ddply(Data_rhizo, c("sample", "cluster", "kingdom"), summarise,
+                      N = sum(!is.na(rel_reads))
+)
+temp
+
+avgASVs_rhizo <- ddply(temp, c("cluster", "kingdom"), summarise,
+                    ASVs = mean(N) #not actually a mean
+)
+avgASVs_rhizo
+
+#Root
+temp <- ddply(Data_root, c("sample", "cluster", "kingdom"), summarise,
+              N = sum(!is.na(rel_reads))
+)
+temp
+
+avgASVs_root <- ddply(temp, c("cluster", "kingdom"), summarise,
+                       ASVs = mean(N) #not actually a mean
+)
+avgASVs_root
+
+#Average SI per kingdom and cluster
+#Rhizosphere
+load("SI_rhizo_16S_ASV_rare_noprune_ss1234.RDa")
+load("SI_rhizo_ITS_ASV_rare_noprune_ss1234.RDa")
+SI_rhizo_16S_ASV$ASV_2 <- paste(SI_rhizo_16S_ASV$ASV, "16S", sep = "_")
+SI_rhizo_ITS_ASV$ASV_2 <- paste(SI_rhizo_ITS_ASV$ASV, "ITS", sep = "_")
+SI_rhizo_both_ASV <- rbind(SI_rhizo_16S_ASV, SI_rhizo_ITS_ASV)
+SI_rhizo_both_ASV$ASV <- NULL
+colnames(SI_rhizo_both_ASV)[4] <- "ASV"
+SI_data_rhizo <- merge(Data_rhizo, SI_rhizo_both_ASV, by = c("ASV"), all = T)
+head(SI_data_rhizo)
+rm(SI_rhizo_16S_ASV)
+rm(SI_rhizo_ITS_ASV)
+
+#Add prokaryote vs fungi
+SI_data_rhizo$kingdom_2 <- SI_data_rhizo$kingdom
+SI_data_rhizo$kingdom_2 <- revalue(SI_data_rhizo$kingdom_2, c("Archaea" = "Prokaryotes", "Bacteria" = "Prokaryotes", "Fungi" = "Fungi"))
+#View(SI_data_rhizo) #NA are those that were lost during rarefication
+
+#Get rarefied data 
+load("rhizo_16S_rare_ss1234.Rda")
+load("root_16S_rare_ss1234.Rda")
+temp_rhizo <- data.frame(sub_rhizo)
+temp_rhizo$ASV <- paste(row.names(temp_rhizo), "16S", sep = "_")
+temp_root <- data.frame(sub_root)
+temp_root$ASV <- paste(row.names(temp_root), "16S", sep = "_")
+rhizo_16S <- melt(temp_rhizo)
+root_16S <- melt(temp_root)
+load("rhizo_ITS_rare_ss1234.Rda")
+load("root_ITS_rare_ss1234.Rda")
+temp_rhizo <- data.frame(sub_rhizo)
+temp_rhizo$ASV <- paste(row.names(temp_rhizo), "ITS", sep = "_")
+temp_root <- data.frame(sub_root)
+temp_root$ASV <- paste(row.names(temp_root), "ITS", sep = "_")
+rhizo_ITS <- melt(temp_rhizo)
+root_ITS <- melt(temp_root)
+rare_rhizo <- rbind(rhizo_16S, rhizo_ITS)
+rare_root <- rbind(root_16S, root_ITS)
+colnames(rare_rhizo) <- c("ASV", "sample", "read_rare")
+colnames(rare_root) <- c("ASV", "sample", "read_rare")
+
+#Merge
+SI_data_rhizo <- merge(SI_data_rhizo, rare_rhizo, by = c("ASV", "sample")) #all = T not needed
+
+#Calculate per sample per cluster per kingdom based on rarefied reads, because SI was based on rarified
+SI_sample_cluster_king <- ddply(SI_data_rhizo, c("sample", "cluster", "kingdom_2"), summarise,
+                                SI_cwm = weighted.mean(SI_cor, read_rare, na.rm=T)
+)
+SI_sample_cluster_king
+
+#Average per cluster per kingdom
+avgSI_rhizo <- ddply(SI_sample_cluster_king, c("cluster", "kingdom_2"), summarise,
+                    avgSI = mean(SI_cwm, na.rm=TRUE), N = sum(!is.na(SI_cwm)), sd = sd(SI_cwm, na.rm=TRUE),
+                    SE = (sd / N)
+)
+avgSI_rhizo
+
+#For all bacteria and fungi
+avgSI_kingdom <- ddply(SI_sample_cluster_king, c("kingdom_2"), summarise,
+                       avgSI = mean(SI_cwm, na.rm=TRUE), N = sum(!is.na(SI_cwm)), sd = sd(SI_cwm, na.rm=TRUE),
+                       SE = (sd / N)
+)
+avgSI_kingdom
+
+#Boxplot
+head(SI_sample_cluster_king)
+SI_sample_cluster_king <- SI_sample_cluster_king[which(!is.na(SI_sample_cluster_king$kingdom_2)),]
+
+plotA <- ggplot(data=SI_sample_cluster_king, aes(x=as.factor(cluster), y=SI_cwm, fill = as.factor(kingdom_2)))+
+  geom_hline(yintercept = 1.78, colour = "#E69F00", size = 1, linetype = "dashed") +
+  geom_hline(yintercept = 3.38, colour = "#009E73", size = 1, linetype = "dashed") +
+  geom_point(position=position_jitterdodge(jitter.width=0.3, jitter.height=0), 
+             aes(colour=as.factor(kingdom_2), alpha=0.9), show.legend = F) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +
+  scale_fill_manual(values=c("#009E73", "#E69F00", "#0072B2", "#D55E00", "#999999", "#56B4E9", "#CC79A7"), name="Group")+
+  scale_colour_manual(values=c("#009E73", "#E69F00", "#0072B2", "#D55E00", "#999999", "#56B4E9", "#CC79A7"), name="Group")+
+  theme_bw() +
+  ggtitle("Rhizosphere") +
+  xlab("Network cluster") +
+  ylab("Specialisation index") +
+  theme(axis.title.y=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.title.x=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.major = element_blank())+
+  theme(strip.text.x=element_text(size=10), strip.background=element_rect(fill="grey"))
+plotA
+
+#Root
+load("SI_root_16S_ASV_rare_noprune_ss1234.RDa")
+load("SI_root_ITS_ASV_rare_noprune_ss1234.RDa")
+SI_root_16S_ASV$ASV_2 <- paste(SI_root_16S_ASV$ASV, "16S", sep = "_")
+SI_root_ITS_ASV$ASV_2 <- paste(SI_root_ITS_ASV$ASV, "ITS", sep = "_")
+SI_root_both_ASV <- rbind(SI_root_16S_ASV, SI_root_ITS_ASV)
+SI_root_both_ASV$ASV <- NULL
+colnames(SI_root_both_ASV)[4] <- "ASV"
+SI_data_root <- merge(Data_root, SI_root_both_ASV, by = c("ASV"), all = T)
+head(SI_data_root)
+rm(SI_root_16S_ASV)
+rm(SI_root_ITS_ASV)
+
+#Add prokaryotes and fungi
+SI_data_root$kingdom_2 <- SI_data_root$kingdom
+SI_data_root$kingdom_2 <- revalue(SI_data_root$kingdom_2, c("Archaea" = "Prokaryotes", "Bacteria" = "Prokaryotes", "Fungi" = "Fungi"))
+
+#Merge to rarefied data
+SI_data_root <- merge(SI_data_root, rare_root, by = c("ASV", "sample")) #all = T not needed
+
+#Calculate per sample per cluster per kingdom
+SI_sample_cluster_king_root <- ddply(SI_data_root, c("sample", "cluster", "kingdom_2"), summarise,
+                                SI = sum(SI_cor * rel_reads, na.rm=TRUE),
+                                SI_cwm = weighted.mean(SI_cor, read_rare, na.rm=T)
+)
+SI_sample_cluster_king_root
+
+#Average per cluster per kingdom
+avgSI_root <- ddply(SI_sample_cluster_king_root, c("cluster", "kingdom_2"), summarise,
+                     avgSI = mean(SI_cwm, na.rm=TRUE), N = sum(!is.na(SI_cwm)), sd = sd(SI_cwm, na.rm=TRUE),
+                    SE = (sd / N)
+)
+avgSI_root
+
+#For all bacteria and fungi
+avgSI_kingdom <- ddply(SI_sample_cluster_king_root, c("kingdom_2"), summarise,
+                    avgSI = mean(SI_cwm, na.rm=TRUE), N = sum(!is.na(SI_cwm)), sd = sd(SI_cwm, na.rm=TRUE),
+                    SE = (sd / N)
+)
+avgSI_kingdom
+
+#Boxplot
+head(SI_sample_cluster_king_root)
+SI_sample_cluster_king_root <- SI_sample_cluster_king_root[which(!is.na(SI_sample_cluster_king_root$kingdom_2)),]
+
+plotB <- ggplot(data=SI_sample_cluster_king_root, aes(x=as.factor(cluster), y=SI_cwm, fill = as.factor(kingdom_2)))+
+  geom_hline(yintercept = 2.94, colour = "#E69F00", size = 1, linetype = "dashed") +
+  geom_hline(yintercept = 4.00, colour = "#009E73", size = 1, linetype = "dashed") +
+  geom_point(position=position_jitterdodge(jitter.width=0.3, jitter.height=0), 
+             aes(colour=as.factor(kingdom_2), alpha=0.9), show.legend = F) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +
+  scale_fill_manual(values=c("#009E73", "#E69F00", "#0072B2", "#D55E00", "#999999", "#56B4E9", "#CC79A7"), name="Group")+
+  scale_colour_manual(values=c("#009E73", "#E69F00", "#0072B2", "#D55E00", "#999999", "#56B4E9", "#CC79A7"), name="Group")+
+  theme_bw() +
+  ggtitle("Root") +
+  xlab("Network cluster") +
+  ylab("Specialisation index") +
+  theme(axis.title.y=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.title.x=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.major = element_blank())+
+  theme(strip.text.x=element_text(size=10), strip.background=element_rect(fill="grey"))
+plotB
+
+#Save
+library(cowplot)
+prowAB <- plot_grid(plotA + theme(legend.position="none"), plotB + theme(legend.position="none"), 
+                    labels=c("A", "B"), ncol=2, nrow=1, align="hv", label_size=12, vjust=1.1)
+legend <- get_legend(plotA + theme(legend.box.margin = margin(0, 0, 0, 12)))
+prow <- plot_grid(prowAB, legend, ncol = 2, rel_widths = c(2,.4))
+prow
+
+#save_plot("C:/Users/dzandt/Desktop/Norway_microbiome/Figs/FigS_SI.png", prow,
+#          ncol = 2, nrow = 1, base_aspect_ratio = 1.5, dpi=600) #PC
+
+##########################################A BASIC PLOTS CLUSTERS VS VARIABLES########################
+#Rhizosphere per cluster
+colnames(MRel_rhizo_cluster)
+plot <- ggplot(data=MRel_rhizo_cluster, aes(x=diversity, y=log(sumrelreads+0.001)))+
+  facet_wrap(~ as.factor(cluster), scale="free") +
+  geom_smooth(method="lm", se=T) +
+  #geom_errorbar(data=MComm, aes(ymin = mtotal_biomass-setotal_biomass, ymax = mtotal_biomass+setotal_biomass), width=.4, colour="darkgrey")+
+  #geom_line(aes(colour=soil)) +
+  geom_point(size=2) +
+  #scale_shape_manual(values=c(19,1)) +
+  #scale_colour_manual(values=c("#009E73","#E69F00", "black", "#0072B2", "#D55E00", "#56B4E9", "#CC79A7", "black"), name="Soil")+
+  #scale_fill_manual(values=c("#E69F00", "#009E73", "#0072B2", "#D55E00", "#999999", "#56B4E9", "#CC79A7"), name="Soil")+
+  #xlab("Species richness")+ 
+  #ylab("NMDS 1 - year 13")+
+  theme_bw() +
+  theme(axis.title.y=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.title.x=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.text=element_text(size=10))+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.major = element_blank())+
+  theme(strip.text.x=element_text(size=10), strip.background=element_rect(fill="grey"))
+plot
+
+#Root per cluster
+colnames(MRel_root_cluster)
+plot <- ggplot(data=MRel_root_cluster, aes(x=diversity, y=log(sumrelreads+0.001), colour = as.factor(cluster)))+
+  facet_wrap(~ as.factor(cluster), scale="free") +
+  geom_smooth(method="lm", se=T) +
+  #geom_errorbar(data=MComm, aes(ymin = mtotal_biomass-setotal_biomass, ymax = mtotal_biomass+setotal_biomass), width=.4, colour="darkgrey")+
+  #geom_line(aes(colour=soil)) +
+  geom_point(size=2) +
+  #scale_shape_manual(values=c(19,1)) +
+  #scale_colour_manual(values=c("#009E73","#E69F00", "black", "#0072B2", "#D55E00", "#56B4E9", "#CC79A7", "black"), name="Soil")+
+  #scale_fill_manual(values=c("#E69F00", "#009E73", "#0072B2", "#D55E00", "#999999", "#56B4E9", "#CC79A7"), name="Soil")+
+  #xlab("Species richness")+ 
+  #ylab("NMDS 1 - year 13")+
+  theme_bw() +
+  theme(axis.title.y=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.title.x=element_text(size=11, colour = "black", margin=(margin(0,10,0,0))))+
+  theme(axis.text=element_text(size=10))+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.major = element_blank())+
+  theme(strip.text.x=element_text(size=10), strip.background=element_rect(fill="grey"))
+plot
+
+
+###################################2 CORRELATIONS BETWEEN CLUSTERS#####################################
+#####2.1 USING LINEAR RELATIONS#####
+#####Rhizosphere
+head(MRel_rhizo_cluster)
+levels(factor(MRel_rhizo_cluster$cluster))
+
+#Make df with clusters as separate columns
+temp1 <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == 1),]
+temp2 <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == 2),]
+temp3 <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == 3),]
+temp4 <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == 4),]
+temp5 <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == 5),]
+temp6 <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == 6),]
+temp7 <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == 7),]
+Mcluster_rhizo <- cbind(temp1, temp2$sumrelreads, temp3$sumrelreads, temp4$sumrelreads, temp5$sumrelreads, 
+                        temp6$sumrelreads, temp7$sumrelreads)
+colnames(Mcluster_rhizo)[c(13,305:310)] <- c("c1", "c2", "c3", "c4", "c5", "c6", "c7")
+
+#Check whether clusters need transformation
+qqnorm(Mcluster_rhizo$c1)
+qqnorm(log(Mcluster_rhizo$c1+0.001)) #Yes
+qqnorm(Mcluster_rhizo$c2)
+qqnorm(log(Mcluster_rhizo$c2+0.001)) #Yes
+qqnorm(Mcluster_rhizo$c3)
+qqnorm(log(Mcluster_rhizo$c3+0.001)) #Yes
+qqnorm(Mcluster_rhizo$c4)
+qqnorm(log(Mcluster_rhizo$c4+0.001)) #Yes
+qqnorm(Mcluster_rhizo$c5)
+qqnorm(log(Mcluster_rhizo$c5+0.001)) #Yes
+qqnorm(Mcluster_rhizo$c6)
+qqnorm(log(Mcluster_rhizo$c6+0.001)) #Yes
+qqnorm(Mcluster_rhizo$c7)
+qqnorm(log(Mcluster_rhizo$c7+0.001)) #Yes
+
+#Transform
+Mcluster_rhizo$c1_log <-log(Mcluster_rhizo$c1)
+Mcluster_rhizo$c2_log <-log(Mcluster_rhizo$c2)
+Mcluster_rhizo$c3_log <-log(Mcluster_rhizo$c3)
+Mcluster_rhizo$c4_log <-log(Mcluster_rhizo$c4)
+Mcluster_rhizo$c5_log <-log(Mcluster_rhizo$c5)
+Mcluster_rhizo$c6_log <-log(Mcluster_rhizo$c6+0.001)
+Mcluster_rhizo$c7_log <-log(Mcluster_rhizo$c7)
+
+#Correlogram
+M <- cor(cbind(Mcluster_rhizo$c1_log, Mcluster_rhizo$c2_log, Mcluster_rhizo$c3_log, Mcluster_rhizo$c4_log, Mcluster_rhizo$c5_log,
+               Mcluster_rhizo$c6_log, Mcluster_rhizo$c7_log),use="p", method = "spearman")
+#Loop
+p.value <-list()
+R2.value <- list()
+for (i in c("c1_log", "c2_log", "c3_log", "c4_log", "c5_log", "c6_log", "c7_log")) {
+  for (j in c("c1_log", "c2_log", "c3_log", "c4_log", "c5_log", "c6_log", "c7_log")) {
+    tryCatch({
+      
+      tmp <- Mcluster_rhizo[, c(i, j, "location")]
+      variabley <- tmp[,1]
+      variablex <- tmp[,2]
+      fit <- lme(variabley ~ variablex, random = ~1|location, data = tmp)
+      p.value[[paste(i,j, sep = "_")]] <- Anova(fit, type=3)[2,3]
+      R2.value[[paste(i,j, sep = "_")]] <- extract_numeric(performance::r2(fit)$R2_marginal)
+      
+    }, error=function(e){cat("ERROR :",conditionMessage(e), "\n")},
+    p.value[[paste(i,j, sep = "_")]] <- NA,
+    R2.value[[paste(i,j, sep = "_")]] <- NA)
+  }
+}
+
+p.value
+R2.value
+
+#To matrix
+tmp_p <- melt(p.value)
+tmp_R2 <- melt(R2.value)
+m_p <- matrix(tmp_p$value, nrow=7, ncol=7, byrow=T)
+m_R2 <- matrix(tmp_R2$value, nrow=7, ncol=7, byrow=T) * sign(M)
+diag(m_p) <- NA
+diag(m_R2) <- NA
+colnames(m_p) <- c("c1", "c2", "c3", "c4", "c5", "c6", "c7")
+rownames(m_p) <- c("c1", "c2", "c3", "c4", "c5", "c6", "c7")
+colnames(m_R2) <- c("c1", "c2", "c3", "c4", "c5", "c6", "c7")
+rownames(m_R2) <- c("c1", "c2", "c3", "c4", "c5", "c6", "c7")
+
+#To network graph
+m_R2[m_p>0.0012] <- 0 #0.05/(7*7-7)=0.0012
+#save(m_R2, file = "m_R2_16S_natural.RDa")
+network <- graph_from_adjacency_matrix(m_R2, weighted=T, mode="undirected", diag=F)
+SCount_rhizo <- ddply(Data_rhizo, c("sample", "cluster"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE))
+vsize <- ddply(SCount_rhizo, c("cluster"), summarise,
+               mrelreads = mean(srelreads, na.rm=TRUE))
+vsize <- vsize[1:7,]$mrelreads
+#vsize_rhizo_16S <- vsize
+#save(vsize_grass_16S, file="vsize_grass_16S.RDa")
+E(network)$color[E(network)$weight > 0]<-"#0072B2" #now color the edges based on their values positive is steelblue
+E(network)$color[E(network)$weight < 0]<-"#D55E00"  #now color the edges based on their values
+am.coord <- layout_in_circle(network)
+par(mar = c(0.1, 0.1, 0.1, 0.1))   
+radian.rescale <- function(x, start=0, direction=1) {
+  c.rotate <- function(x) (x + start) %% (2 * pi) * direction
+  c.rotate(scales::rescale(x, c(0, 2 * pi), range(x)))
+}
+n <- 7
+lab.locs <- radian.rescale(x=1:n, direction=-1, start=0)
+
+plot(network, vertex.size = vsize*100, edge.width=abs(E(network)$weight)*10, edge.curved=.1, layout = am.coord,
+     vertex.color = "grey", vertex.frame.color = "white", vertex.label.font=2, vertex.label=c(1:7), 
+     vertex.label.dist=2,  vertex.label.color="black", vertex.label.degree=lab.locs)
+p <- recordPlot()
+prow <- plot_grid(p, labels=c("C"), align="hv", label_size=12, vjust=1.1, rel_heights = c(1,2))
+prow
+#save_plot("E:/Prague/1. Dry grassland development/MS/Figures/FigX_Clusters_16S_grass.png", prow,
+#ncol = 0.5, nrow = 0.5, base_aspect_ratio = 1, dpi=600) #PC
+
+
+#####Root
+head(MRel_root_cluster)
+levels(factor(MRel_root_cluster$cluster))
+
+#Make df with clusters as separate columns
+temp1 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 1),]
+temp2 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 2),]
+temp3 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 3),]
+temp4 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 4),]
+temp5 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 5),]
+temp6 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 6),]
+temp7 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 7),]
+temp8 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 8),]
+temp9 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 9),]
+temp10 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 10),]
+temp11 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 11),]
+Mcluster_root <- cbind(temp1, temp2$sumrelreads, temp3$sumrelreads, temp4$sumrelreads, temp5$sumrelreads, 
+                        temp6$sumrelreads, temp7$sumrelreads, temp8$sumrelreads, temp9$sumrelreads, 
+                       temp10$sumrelreads, temp11$sumrelreads)
+colnames(Mcluster_root)[c(13,305:314)] <- c("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9", "c10", "c11")
+
+#Check whether clusters need transformation
+qqnorm(Mcluster_root$c1)
+qqnorm(log(Mcluster_root$c1+0.001)) #No
+qqnorm(Mcluster_root$c2)
+qqnorm(log(Mcluster_root$c2+0.001)) #Yes
+qqnorm(Mcluster_root$c3)
+qqnorm(log(Mcluster_root$c3+0.001)) #No
+qqnorm(sqrt(Mcluster_root$c3+0.001)) #Yes
+qqnorm(Mcluster_root$c4)
+qqnorm(log(Mcluster_root$c4+0.001)) #No
+qqnorm(sqrt(Mcluster_root$c4+0.001)) #Yes
+qqnorm(Mcluster_root$c5)
+qqnorm(log(Mcluster_root$c5+0.001)) #NO
+qqnorm(Mcluster_root$c6)
+qqnorm(log(Mcluster_root$c6+0.001)) #Yes
+qqnorm(sqrt(Mcluster_root$c6+0.001)) #no
+qqnorm(Mcluster_root$c7)
+qqnorm(log(Mcluster_root$c7+0.001)) #Yes
+qqnorm(Mcluster_root$c8)
+qqnorm(log(Mcluster_root$c8+0.001)) #Yes
+qqnorm(Mcluster_root$c9)
+qqnorm(log(Mcluster_root$c9+0.001)) #YES
+qqnorm(Mcluster_root$c10)
+qqnorm(log(Mcluster_root$c10+0.001)) #YES
+qqnorm(Mcluster_root$c11)
+qqnorm(log(Mcluster_root$c11+0.001)) #NO
+
+#Transform
+Mcluster_root$c2_log <-log(Mcluster_root$c2+0.001)
+Mcluster_root$c3_log <-log(Mcluster_root$c3+0.001)
+Mcluster_root$c4_sqrt <-sqrt(Mcluster_root$c4)
+Mcluster_root$c6_log <-log(Mcluster_root$c6+0.001)
+Mcluster_root$c7_log <-log(Mcluster_root$c7+0.001)
+Mcluster_root$c8_log <-log(Mcluster_root$c8)
+Mcluster_root$c9_log <-log(Mcluster_root$c9+0.001)
+Mcluster_root$c10_log <-log(Mcluster_root$c10+0.001)
+
+#Correlogram
+library(corrplot)
+M <- cor(cbind(Mcluster_root$c1, Mcluster_root$c2_log, Mcluster_root$c3_log, Mcluster_root$c4_sqrt, Mcluster_root$c5,
+               Mcluster_root$c6_log, Mcluster_root$c7_log, Mcluster_root$c8_log, Mcluster_root$c9_log, Mcluster_root$c10_log, 
+               Mcluster_root$c11),use="p")
+corrplot(M, method="color", addCoef.col = "black", type="upper", diag=FALSE,
+         tl.col="black", tl.srt=45)
+
+#Loop
+p.value <-list()
+R2.value <- list()
+for (i in c("c1", "c2_log", "c3_log", "c4_sqrt", "c5", "c6_log", "c7_log", "c8_log", "c9_log", "c10_log", "c11")) {
+  for (j in c("c1", "c2_log", "c3_log", "c4_sqrt", "c5", "c6_log", "c7_log", "c8_log", "c9_log", "c10_log", "c11")) {
+    tryCatch({
+      
+      tmp <- Mcluster_root[, c(i, j, "location")]
+      variabley <- tmp[,1]
+      variablex <- tmp[,2]
+      fit <- lme(variabley ~ variablex, random = ~1|location, data = tmp)
+      p.value[[paste(i,j, sep = "_")]] <- Anova(fit, type=3)[2,3]
+      R2.value[[paste(i,j, sep = "_")]] <- extract_numeric(performance::r2(fit)$R2_marginal)
+      
+    }, error=function(e){cat("ERROR :",conditionMessage(e), "\n")},
+    p.value[[paste(i,j, sep = "_")]] <- NA,
+    R2.value[[paste(i,j, sep = "_")]] <- NA)
+  }
+}
+
+p.value
+R2.value
+
+#To matrix
+tmp_p <- melt(p.value)
+tmp_R2 <- melt(R2.value)
+m_p <- matrix(tmp_p$value, nrow=11, ncol=11, byrow=T)
+m_R2 <- matrix(tmp_R2$value, nrow=11, ncol=11, byrow=T) * sign(M)
+diag(m_p) <- NA
+diag(m_R2) <- NA
+colnames(m_p) <- c("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9", "c10", "c11")
+rownames(m_p) <- c("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9", "c10", "c11")
+colnames(m_R2) <- c("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9", "c10", "c11")
+rownames(m_R2) <- c("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9", "c10", "c11")
+
+#To network graph
+m_R2[m_p>0.00045] <- 0 #0.05/(11*11-11)=0.00045
+#save(m_R2, file = "m_R2_16S_natural.RDa")
+network <- graph_from_adjacency_matrix(m_R2, weighted=T, mode="undirected", diag=F)
+SCount_root <- ddply(Data_root, c("sample", "cluster"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE))
+vsize <- ddply(SCount_root, c("cluster"), summarise,
+               mrelreads = mean(srelreads, na.rm=TRUE))
+vsize <- vsize[1:11,]$mrelreads
+#vsize_root_16S <- vsize
+#save(vsize_grass_16S, file="vsize_grass_16S.RDa")
+E(network)$color[E(network)$weight > 0]<-"#0072B2" #now color the edges based on their values positive is steelblue
+E(network)$color[E(network)$weight < 0]<-"#D55E00"  #now color the edges based on their values
+am.coord <- layout_in_circle(network)
+par(mar = c(0.1, 0.1, 0.1, 0.1))   
+radian.rescale <- function(x, start=0, direction=1) {
+  c.rotate <- function(x) (x + start) %% (2 * pi) * direction
+  c.rotate(scales::rescale(x, c(0, 2 * pi), range(x)))
+}
+n <- 11
+lab.locs <- radian.rescale(x=1:n, direction=-1, start=0)
+
+plot(network, vertex.size = vsize*100, edge.width=abs(E(network)$weight)*10, edge.curved=.1, layout = am.coord,
+     vertex.color = "grey", vertex.frame.color = "white", vertex.label.font=2, vertex.label=c(1:11), 
+     vertex.label.dist=2,  vertex.label.color="black", vertex.label.degree=lab.locs)
+p <- recordPlot()
+prow <- plot_grid(p, labels=c("C"), align="hv", label_size=12, vjust=1.1, rel_heights = c(1,2))
+prow
+#save_plot("E:/Prague/1. Dry grassland development/MS/Figures/FigX_Clusters_16S_grass.png", prow,
+#ncol = 0.5, nrow = 0.5, base_aspect_ratio = 1, dpi=600) #PC
+
+#TOGETHER
+#Merge the two dataframes
+colnames(Mcluster_rhizo)
+colnames(Mcluster_root)
+temp <- merge(Mcluster_rhizo[,c(4, 9, 311:317)], Mcluster_root[,c(4,9,13,308,314:322)], by = c("location", "replicate"))
+head(temp)
+colnames(temp)
+colnames(temp)[3:9] <- c("rhizo_c1", "rhizo_c2", "rhizo_c3", "rhizo_c4", "rhizo_c5", "rhizo_c6", "rhizo_c7")
+colnames(temp)[10:20] <- c("root_c1", "root_c5", "root_c11", "root_c2", "root_c3", "root_c4", "root_c6", "root_c7", 
+                           "root_c8", "root_c9", "root_c10")
+head(temp)
+Mcluster_together <- temp
+
+#Correlogram
+library(corrplot)
+M <- cor(cbind(Mcluster_together$rhizo_c1, Mcluster_together$rhizo_c2, Mcluster_together$rhizo_c3, Mcluster_together$rhizo_c4, Mcluster_together$rhizo_c5,
+               Mcluster_together$rhizo_c6, Mcluster_together$rhizo_c7, 
+               Mcluster_together$root_c1, Mcluster_together$root_c2, Mcluster_together$root_c3, Mcluster_together$root_c4, 
+               Mcluster_together$root_c5, Mcluster_together$root_c6, Mcluster_together$root_c7, Mcluster_together$root_c8, 
+               Mcluster_together$root_c9, Mcluster_together$root_c10, Mcluster_together$root_c11),use="p")
+corrplot(M, method="color", addCoef.col = "black", type="upper", diag=FALSE,
+         tl.col="black", tl.srt=45)
+
+tmp <- Mcluster_together[, c("rhizo_c2", "rhizo_c3", "location")]
+variabley <- tmp[,1]
+variablex <- tmp[,2]
+tmp$location <- factor(tmp$location)
+plot(variabley ~ variablex, pch=19)
+vf <- varIdent(~1|as.factor(location))
+fit <- lme(variabley ~ variablex, random = ~1|location, data = tmp)
+Anova(fit, type=3)[2,3]
+extract_numeric(performance::r2(fit)$R2_marginal)
+qqnorm(resid(fit))
+plot(fitted(fit), resid(fit))
+
+#Loop
+p.value <-list()
+R2.value <- list()
+for (i in c("rhizo_c1", "rhizo_c2", "rhizo_c3", "rhizo_c4", "rhizo_c5", "rhizo_c6", "rhizo_c7", 
+            "root_c1", "root_c2", "root_c3", "root_c4", "root_c5", "root_c6", "root_c7", "root_c8", "root_c9", "root_c10", "root_c11")) {
+  for (j in c("rhizo_c1", "rhizo_c2", "rhizo_c3", "rhizo_c4", "rhizo_c5", "rhizo_c6", "rhizo_c7", 
+              "root_c1", "root_c2", "root_c3", "root_c4", "root_c5", "root_c6", "root_c7", "root_c8", "root_c9", "root_c10", "root_c11")) {
+    tryCatch({
+      
+      tmp <- Mcluster_together[, c(i, j, "location")]
+      variabley <- tmp[,1]
+      variablex <- tmp[,2]
+      fit <- lme(variabley ~ variablex, random = ~1|location, data = tmp)
+      p.value[[paste(i,j, sep = "_")]] <- Anova(fit, type=3)[2,3]
+      R2.value[[paste(i,j, sep = "_")]] <- extract_numeric(performance::r2(fit)$R2_marginal)
+      
+    }, error=function(e){cat("ERROR :",conditionMessage(e), "\n")},
+    p.value[[paste(i,j, sep = "_")]] <- NA,
+    R2.value[[paste(i,j, sep = "_")]] <- NA)
+  }
+}
+
+p.value
+R2.value
+
+#To matrix
+tmp_p <- melt(p.value)
+tmp_R2 <- melt(R2.value)
+m_p <- matrix(tmp_p$value, nrow=18, ncol=18, byrow=T)
+m_R2 <- matrix(tmp_R2$value, nrow=18, ncol=18, byrow=T) * sign(M)
+diag(m_p) <- NA
+diag(m_R2) <- NA
+colnames(m_p) <- c("rhizo_c1", "rhizo_c2", "rhizo_c3", "rhizo_c4", "rhizo_c5", "rhizo_c6", "rhizo_c7", 
+                   "root_c1", "root_c2", "root_c3", "root_c4", "root_c5", "root_c6", "root_c7", "root_c8", "root_c9", "root_c10", "root_c11")
+rownames(m_p) <- c("rhizo_c1", "rhizo_c2", "rhizo_c3", "rhizo_c4", "rhizo_c5", "rhizo_c6", "rhizo_c7", 
+                   "root_c1", "root_c2", "root_c3", "root_c4", "root_c5", "root_c6", "root_c7", "root_c8", "root_c9", "root_c10", "root_c11")
+colnames(m_R2) <- c("rhizo_c1", "rhizo_c2", "rhizo_c3", "rhizo_c4", "rhizo_c5", "rhizo_c6", "rhizo_c7", 
+                    "root_c1", "root_c2", "root_c3", "root_c4", "root_c5", "root_c6", "root_c7", "root_c8", "root_c9", "root_c10", "root_c11")
+rownames(m_R2) <- c("rhizo_c1", "rhizo_c2", "rhizo_c3", "rhizo_c4", "rhizo_c5", "rhizo_c6", "rhizo_c7", 
+                    "root_c1", "root_c2", "root_c3", "root_c4", "root_c5", "root_c6", "root_c7", "root_c8", "root_c9", "root_c10", "root_c11")
+
+#To network graph
+m_R2[m_p>0.00016] <- 0 #0.05/(11*11-11)=0.00045
+#save(m_R2, file = "m_R2_16S_natural.RDa")
+network <- graph_from_adjacency_matrix(m_R2, weighted=T, mode="undirected", diag=F)
+SCount_rhizo <- ddply(Data_rhizo, c("sample", "cluster"), summarise,
+                     srelreads = sum(rel_reads, na.rm=TRUE))
+vsize_rhizo <- ddply(SCount_rhizo, c("cluster"), summarise,
+               mrelreads = mean(srelreads, na.rm=TRUE))
+SCount_root <- ddply(Data_root, c("sample", "cluster"), summarise,
+                     srelreads = sum(rel_reads, na.rm=TRUE))
+vsize_root <- ddply(SCount_root, c("cluster"), summarise,
+               mrelreads = mean(srelreads, na.rm=TRUE))
+vsize <- c(vsize_rhizo[1:7,]$mrelreads, vsize_root[1:11,]$mrelreads)
+
+#Get sizes of 16S seperately
+head(Data_rhizo)
+levels(factor(Data_rhizo$kingdom))
+SCount_rhizo_16S <- ddply(Data_rhizo[which(Data_rhizo$kingdom %in% c("Bacteria", "Archaea")),], c("sample", "cluster"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE))
+vsize_rhizo_16S <- ddply(SCount_rhizo_16S, c("cluster"), summarise,
+                     mrelreads = mean(srelreads, na.rm=TRUE))
+SCount_root_16S <- ddply(Data_root[which(Data_root$kingdom %in% c("Bacteria", "Archaea")),], c("sample", "cluster"), summarise,
+                           srelreads = sum(rel_reads, na.rm=TRUE))
+vsize_root_16S <- ddply(SCount_root_16S, c("cluster"), summarise,
+                          mrelreads = mean(srelreads, na.rm=TRUE))
+vsize_16S <- c(vsize_rhizo_16S[1:7,]$mrelreads, vsize_root_16S[1:11,]$mrelreads)
+#save(vsize_grass_16S, file="vsize_grass_16S.RDa")
+E(network)$color[E(network)$weight > 0]<-"#0072B2" #now color the edges based on their values positive is steelblue
+E(network)$color[E(network)$weight < 0]<-"#D55E00"  #now color the edges based on their values
+am.coord <- layout_in_circle(network)
+par(mar = c(0.1, 0.1, 0.1, 0.1))   
+radian.rescale <- function(x, start=0, direction=1) {
+  c.rotate <- function(x) (x + start) %% (2 * pi) * direction
+  c.rotate(scales::rescale(x, c(0, 2 * pi), range(x)))
+}
+n <- 18
+lab.locs <- radian.rescale(x=1:n, direction=-1, start=0)
+
+plot(network, vertex.size = vsize*100, edge.width=abs(E(network)$weight)*20, edge.curved=.1, layout = am.coord,
+     vertex.color = adjustcolor("grey", alpha.f = .5), vertex.frame.color = "black", vertex.label.font=2, #vertex.label=c(1:11), 
+     vertex.label.dist=2,  vertex.label.color="black", vertex.label.degree=lab.locs)
+p <- recordPlot()
+
+#Try to have 16S and ITS sizes using ggnetwork and ggplot
+library(ggnetwork)
+V(network)$size <- vsize*100
+V(network)$size_16S <- vsize_16S * 100
+V(network)$compartment <- c(rep("rhizosphere", 7), rep("root", 11))
+V(network)$lab_locs <- lab.locs
+V(network)$name_2 <- c(1:7, 1:11)
+n <- ggnetwork(network, layout = am.coord)
+plot_networks <- ggplot(n, aes(x = x, y = y, xend = xend, yend = yend)) + 
+  geom_edges(aes(colour = color, size = abs(weight)/10), curvature = 0.1) +
+  geom_nodes(aes(size = size, colour = compartment), alpha = 0.5) +
+  geom_nodes(aes(size = size_16S, colour = compartment)) +
+  geom_nodetext(aes(label = name_2, size = 0.5, fontface = "bold"), 
+                colour = c("black", "black",  "black", "white", "white", "white", "white", "white",
+                           "white", "white", rep("black", 8))) +
+  scale_size_continuous(range = c(1, 24)) +
+  scale_colour_manual(values = c("#009E73", "#E69F00", "black", "grey70")) +
+  theme_blank() +
+  theme(legend.position="none")
+plot_networks
+prow <- plot_grid(plot_networks, align="hv", label_size=12, vjust=1.1, scale=1)
+prow
+#save_plot("C:/Users/dzandt/Desktop/Norway_microbiome/Figs/Fig_networkclusters_2.0.png", prow,
+#ncol = 1.5, nrow = 1.5, base_aspect_ratio = 1, dpi=600)
+
+#palette.colors(palette = "Okabe-Ito")
+##         black        orange       skyblue   bluishgreen        yellow 
+##     "#000000"     "#E69F00"     "#56B4E9"     "#009E73"     "#F0E442" 
+##          blue    vermillion reddishpurple          gray 
+##     "#0072B2"     "#D55E00"     "#CC79A7"     "#999999" 
+
+
+#####2.2 USING GAMMA MODELS#####
+#####Together
+#Merge the two dataframes without transformations
+#Merge the two dataframes
+colnames(Mcluster_rhizo)
+colnames(Mcluster_root)
+temp <- merge(Mcluster_rhizo[,c(4, 9, 13, 305:310)], Mcluster_root[,c(4, 9, 13, 305:314)], by = c("location", "replicate"))
+head(temp)
+colnames(temp)[3:9] <- c("rhizo_c1", "rhizo_c2", "rhizo_c3", "rhizo_c4", "rhizo_c5", "rhizo_c6", "rhizo_c7")
+colnames(temp)[10:20] <- c("root_c1", "root_c2", "root_c3", "root_c4", "root_c5", "root_c6", "root_c7", "root_c8", 
+                           "root_c9", "root_c10", "root_c11")
+head(temp)
+Mcluster_together_nl <- temp
+
+#What should the model be like? Gamma (all is positive) with random factor
+library(lme4)
+library(r2glmm)
+
+#Loop
+p.value <-list()
+R2.value <- list()
+for (i in c("rhizo_c1", "rhizo_c2", "rhizo_c3", "rhizo_c4", "rhizo_c5", "rhizo_c6", "rhizo_c7", 
+            "root_c1", "root_c2", "root_c3", "root_c4", "root_c5", "root_c6", "root_c7", "root_c8", "root_c9", "root_c10", "root_c11")) {
+  for (j in c("rhizo_c1", "rhizo_c2", "rhizo_c3", "rhizo_c4", "rhizo_c5", "rhizo_c6", "rhizo_c7", 
+              "root_c1", "root_c2", "root_c3", "root_c4", "root_c5", "root_c6", "root_c7", "root_c8", "root_c9", "root_c10", "root_c11")) {
+    tryCatch({
+      
+      tmp <- Mcluster_together_nl[, c(i, j, "location")]
+      variabley <- tmp[,1]
+      variablex <- tmp[,2]
+      fit_gamma <- glmer(variabley ~ variablex + (1 | location), family = Gamma, data = tmp)
+      p.value[[paste(i,j, sep = "_")]] <- summary(fit_gamma)$coefficients[2,4]
+      R2.value[[paste(i,j, sep = "_")]] <- r2beta(fit_gamma)$Rsq[2]
+      
+    }, error=function(e){cat("ERROR :",conditionMessage(e), "\n")},
+    p.value[[paste(i,j, sep = "_")]] <- NA,
+    R2.value[[paste(i,j, sep = "_")]] <- NA)
+  }
+}
+
+p.value
+R2.value
+#Below zero error: probably because there are too many zero's
+
+#To matrix
+tmp_p <- melt(p.value)
+tmp_R2 <- melt(R2.value)
+m_p <- matrix(tmp_p$value, nrow=18, ncol=18, byrow=T)
+m_R2 <- matrix(tmp_R2$value, nrow=18, ncol=18, byrow=T) * sign(M)
+diag(m_p) <- NA
+diag(m_R2) <- NA
+colnames(m_p) <- c("rhizo_c1", "rhizo_c2", "rhizo_c3", "rhizo_c4", "rhizo_c5", "rhizo_c6", "rhizo_c7", 
+                   "root_c1", "root_c2", "root_c3", "root_c4", "root_c5", "root_c6", "root_c7", "root_c8", "root_c9", "root_c10", "root_c11")
+rownames(m_p) <- c("rhizo_c1", "rhizo_c2", "rhizo_c3", "rhizo_c4", "rhizo_c5", "rhizo_c6", "rhizo_c7", 
+                   "root_c1", "root_c2", "root_c3", "root_c4", "root_c5", "root_c6", "root_c7", "root_c8", "root_c9", "root_c10", "root_c11")
+colnames(m_R2) <- c("rhizo_c1", "rhizo_c2", "rhizo_c3", "rhizo_c4", "rhizo_c5", "rhizo_c6", "rhizo_c7", 
+                    "root_c1", "root_c2", "root_c3", "root_c4", "root_c5", "root_c6", "root_c7", "root_c8", "root_c9", "root_c10", "root_c11")
+rownames(m_R2) <- c("rhizo_c1", "rhizo_c2", "rhizo_c3", "rhizo_c4", "rhizo_c5", "rhizo_c6", "rhizo_c7", 
+                    "root_c1", "root_c2", "root_c3", "root_c4", "root_c5", "root_c6", "root_c7", "root_c8", "root_c9", "root_c10", "root_c11")
+
+#To network graph
+m_R2[m_p>0.05] <- 0 #0.05/(11*11-11)=0.00045
+#save(m_R2, file = "m_R2_16S_natural.RDa")
+network <- graph_from_adjacency_matrix(m_R2, weighted=T, mode="undirected", diag=F)
+SCount_rhizo <- ddply(Data_rhizo, c("sample", "cluster"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE))
+vsize_rhizo <- ddply(SCount_rhizo, c("cluster"), summarise,
+                     mrelreads = mean(srelreads, na.rm=TRUE))
+SCount_root <- ddply(Data_root, c("sample", "cluster"), summarise,
+                     srelreads = sum(rel_reads, na.rm=TRUE))
+vsize_root <- ddply(SCount_root, c("cluster"), summarise,
+                    mrelreads = mean(srelreads, na.rm=TRUE))
+vsize <- c(vsize_rhizo[1:7,]$mrelreads, vsize_root[1:11,]$mrelreads)
+#vsize_root_16S <- vsize
+#save(vsize_grass_16S, file="vsize_grass_16S.RDa")
+E(network)$color[E(network)$weight > 0]<-"#0072B2" #now color the edges based on their values positive is steelblue
+E(network)$color[E(network)$weight < 0]<-"#D55E00"  #now color the edges based on their values
+am.coord <- layout_in_circle(network)
+par(mar = c(0.1, 0.1, 0.1, 0.1))   
+radian.rescale <- function(x, start=0, direction=1) {
+  c.rotate <- function(x) (x + start) %% (2 * pi) * direction
+  c.rotate(scales::rescale(x, c(0, 2 * pi), range(x)))
+}
+n <- 18
+lab.locs <- radian.rescale(x=1:n, direction=-1, start=0)
+
+plot(network, vertex.size = vsize*100, edge.width=abs(E(network)$weight)*10, edge.curved=.1, layout = am.coord,
+     vertex.color = "grey", vertex.frame.color = "black", vertex.label.font=2, #vertex.label=c(1:11), 
+     vertex.label.dist=2,  vertex.label.color="black", vertex.label.degree=lab.locs)
+p <- recordPlot()
+prow <- plot_grid(p, labels=c("C"), align="hv", label_size=12, vjust=1.1, rel_heights = c(1,2))
+prow
+#save_plot("E:/Prague/1. Dry grassland development/MS/Figures/FigX_Clusters_16S_grass.png", prow,
+#ncol = 0.5, nrow = 0.5, base_aspect_ratio = 1, dpi=600) #PC

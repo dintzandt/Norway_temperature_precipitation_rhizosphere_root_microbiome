@@ -1,0 +1,1210 @@
+rm(list=ls())
+getwd()
+setwd("D:/Prague/4. Norway/R") #PC
+
+library("phyloseq")
+library("vegan")
+library("DESeq2")
+library("ggplot2")
+library("dendextend")
+library("tidyr")
+library("viridis")
+library("reshape")
+library("plyr")
+library("stringr")
+library("metagMisc")
+library("igraph")
+library(cowplot)
+library(car)
+library(nlme)
+library(sjstats)
+library(corrplot)
+
+#Read in physeq data for rhizosphere
+load("MRel_rhizo_cluster.RDa")
+load("MRel_root_cluster.RDa")
+
+#Replace some of the vegetation values
+load("Mveg_2019.RDa")
+colnames(MRel_rhizo_cluster)
+MRel_rhizo_cluster <- merge(MRel_rhizo_cluster[,-c(272:276)], Mveg, by = c("elevation", "latitude", "longitude", "location", 
+                                                                           "P.grid", "T.grid", "siteID"), all=T)
+MRel_root_cluster <- merge(MRel_root_cluster[,-c(272:276)], Mveg, by = c("elevation", "latitude", "longitude", "location", 
+                                                                         "P.grid", "T.grid", "siteID"), all=T)
+
+#Subset with only the variables between locations
+env_rhizo <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == "1"),]
+
+#Transformations rhizo
+MRel_rhizo_cluster$tmossHeight <- log(MRel_rhizo_cluster$mossHeight)
+MRel_rhizo_cluster$tgraminoid_cover <- log(MRel_rhizo_cluster$graminoid_cover +0.001)
+MRel_rhizo_cluster$tforb_cover <- log(MRel_rhizo_cluster$forb_cover)
+MRel_rhizo_cluster$tpteridophyte_cover <- sqrt(MRel_rhizo_cluster$pteridophyte_cover)
+MRel_rhizo_cluster$twoody_cover <- sqrt(MRel_rhizo_cluster$woody_cover)
+MRel_rhizo_cluster$tlichen_cover <- sqrt(MRel_rhizo_cluster$lichen_cover)
+MRel_rhizo_cluster$tlegume_cover <- sqrt(MRel_rhizo_cluster$legume_cover)
+MRel_rhizo_cluster$themiparasite_cover <- sqrt(MRel_rhizo_cluster$hemiparasite_cover)
+MRel_rhizo_cluster$ttotBryophyte_cover <- sqrt(MRel_rhizo_cluster$totBryophyte_cover)
+
+#Scale P.grid
+MRel_rhizo_cluster$tP.grid <- scale(MRel_rhizo_cluster$P.grid)
+
+#Transformations root
+MRel_root_cluster$tmossHeight <- log(MRel_root_cluster$mossHeight)
+MRel_root_cluster$tgraminoid_cover <- log(MRel_root_cluster$graminoid_cover +0.001)
+MRel_root_cluster$tforb_cover <- log(MRel_root_cluster$forb_cover)
+MRel_root_cluster$tpteridophyte_cover <- sqrt(MRel_root_cluster$pteridophyte_cover)
+MRel_root_cluster$twoody_cover <- sqrt(MRel_root_cluster$woody_cover)
+MRel_root_cluster$tlichen_cover <- sqrt(MRel_root_cluster$lichen_cover)
+MRel_root_cluster$tlegume_cover <- sqrt(MRel_root_cluster$legume_cover)
+MRel_root_cluster$themiparasite_cover <- sqrt(MRel_root_cluster$hemiparasite_cover)
+MRel_root_cluster$ttotBryophyte_cover <- sqrt(MRel_root_cluster$totBryophyte_cover)
+
+#Scale P.grid
+MRel_root_cluster$tP.grid <- scale(MRel_root_cluster$P.grid)
+
+#Make set including clusters
+#Rhizosphere
+temp1 <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == 1),]
+temp2 <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == 2),]
+temp3 <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == 3),]
+temp4 <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == 4),]
+temp5 <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == 5),]
+temp6 <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == 6),]
+temp7 <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == 7),]
+Mcluster_rhizo <- cbind(temp1, temp2$sumrelreads, temp3$sumrelreads, temp4$sumrelreads, temp5$sumrelreads, 
+                        temp6$sumrelreads, temp7$sumrelreads)
+colnames(Mcluster_rhizo)[c(13,306:311)] <- c("c1", "c2", "c3", "c4", "c5", "c6", "c7")
+
+#Transform clusters
+Mcluster_rhizo$c1_log <-log(Mcluster_rhizo$c1)
+Mcluster_rhizo$c2_log <-log(Mcluster_rhizo$c2)
+Mcluster_rhizo$c3_log <-log(Mcluster_rhizo$c3)
+Mcluster_rhizo$c4_log <-log(Mcluster_rhizo$c4)
+Mcluster_rhizo$c5_log <-log(Mcluster_rhizo$c5)
+Mcluster_rhizo$c6_log <-log(Mcluster_rhizo$c6+0.001)
+Mcluster_rhizo$c7_log <-log(Mcluster_rhizo$c7)
+
+#Root
+temp1 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 1),]
+temp2 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 2),]
+temp3 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 3),]
+temp4 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 4),]
+temp5 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 5),]
+temp6 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 6),]
+temp7 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 7),]
+temp8 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 8),]
+temp9 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 9),]
+temp10 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 10),]
+temp11 <- MRel_root_cluster[which(MRel_root_cluster$cluster == 11),]
+Mcluster_root <- cbind(temp1, temp2$sumrelreads, temp3$sumrelreads, temp4$sumrelreads, temp5$sumrelreads, 
+                       temp6$sumrelreads, temp7$sumrelreads, temp8$sumrelreads, temp9$sumrelreads, 
+                       temp10$sumrelreads, temp11$sumrelreads)
+colnames(Mcluster_root)[c(13,306:315)] <- c("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9", "c10", "c11")
+
+#Transform
+Mcluster_root$c2_log <-log(Mcluster_root$c2+0.001)
+Mcluster_root$c3_log <-log(Mcluster_root$c3+0.001)
+Mcluster_root$c4_sqrt <-sqrt(Mcluster_root$c4)
+Mcluster_root$c6_log <-log(Mcluster_root$c6+0.001)
+Mcluster_root$c7_log <-log(Mcluster_root$c7+0.001)
+Mcluster_root$c8_log <-log(Mcluster_root$c8)
+Mcluster_root$c9_log <-log(Mcluster_root$c9+0.001)
+Mcluster_root$c10_log <-log(Mcluster_root$c10+0.001)
+
+#Make new env_rhizo
+env_rhizo <- MRel_rhizo_cluster[which(MRel_rhizo_cluster$cluster == "1"),]
+
+#########################################################END OF DATA HANDLING#######################################
+######A-Calculate relative contribution pathways
+par(mfrow = c(1, 1))
+
+#PC - top part of SEM
+SEM_PC <- as.matrix(read.table("PC_SEM_5.0.txt", sep="\t",header=T, row.names=1))
+colnames(SEM_PC) <-  c("Temperature", "Precipitation", "Season length", "Winter temperature", "Mean SM", "Circadian SM", "Forb cover", "Shrub cover", 
+                       "Bryophyte cover", "Plant diversity", "Litter cover", "pH", "PO4", "NO3")
+network <- graph_from_adjacency_matrix(SEM_PC, weighted=T, mode="directed", diag=F)
+E(network)[weight > 0]$color<-"#0072B2"
+E(network)[weight < 0]$color<-"#D55E00"
+am.coord <- layout_in_circle(network, order = rev(V(network)))
+deg <- colSums(abs(SEM_PC)) + rowSums(abs(SEM_PC))
+deg_cor <- c(deg[1:2], deg[3], deg[4], deg[5:8]/4, deg[9:11]/4) #Number of pathways affecting each factor
+par(mar = c(0.1, 0.1, 0.1, 0.1))
+radian.rescale <- function(x, start=0, direction=1) {
+  c.rotate <- function(x) (x + start) %% (2 * pi) * direction
+  c.rotate(scales::rescale(x, c(0, 2 * pi), range(x)))
+}
+n <- 14
+lab.locs <- radian.rescale(x=1:n, direction=1, start=0)
+plot(network, vertex.size = deg*10, edge.width=abs(E(network)$weight)*5, edge.curved=.1, layout = am.coord,
+     vertex.color = adjustcolor(c(rep("grey80", 8), rep("darkgreen", 15)), alpha.f = .5), vertex.frame.color = "white", vertex.label.font=1, 
+     vertex.label.color="black", vertex.label.degree=lab.locs, vertex.label.dist=1.5,
+     vertex.label.cex=c(0.6))
+
+
+#Calculate effect sizes of these different pathways and place in matrix
+head(SEM_PC)
+
+#Precipitation
+#1 Temperature --> Season length
+path1_temp <- abs(SEM_PC[1,3])
+#1.1 Temperature --> Season length --> Plant diversity
+path1.1_temp <- abs(SEM_PC[1,3]) * abs(SEM_PC[3,10])
+#1.1.1 Temperature --> Season length --> Plant diversity --> PO4
+path1.1.1_temp <- abs(SEM_PC[1,3]) * abs(SEM_PC[3,10]) * abs(SEM_PC[10,13])
+#1.2 Temperature --> Season length --> Shrub cover
+path1.2_temp <- abs(SEM_PC[1,3]) * abs(SEM_PC[3,8])
+#1.2.1 Temperature --> Season length --> Shrub cover --> Circadian SM
+path1.2.1_temp <- abs(SEM_PC[1,3]) * abs(SEM_PC[3,8]) * abs(SEM_PC[8,6])
+#1.3 Temperature --> Season length --> pH
+path1.3_temp <- abs(SEM_PC[1,3]) * abs(SEM_PC[3,12])
+#2 Temperature --> Winter temperature
+path2_temp <- abs(SEM_PC[1,4])
+#2.1 Temperature --> Winter temperature --> Circadian SM
+path2.1_temp <- abs(SEM_PC[1,4]) * abs(SEM_PC[4,6])
+#2.2 Temperature --> Winter temperature --> Bryophyte cover
+path2.2_temp <- abs(SEM_PC[1,4]) * abs(SEM_PC[4,9])
+#2.3 Temperature --> Winter temperature --> Litter cover
+path2.3_temp <- abs(SEM_PC[1,4]) * abs(SEM_PC[4,11])
+#3 Temperature --> Forb cover
+path3_temp <- abs(SEM_PC[1,7])
+#3.1 Temperature --> Forb cover --> NO3
+path3.1_temp <- abs(SEM_PC[1,7]) * abs(SEM_PC[7,14])
+
+#Precipitation
+#4 Precipitation --> Season length
+path4_precip <- abs(SEM_PC[2,3])
+#4.1 Precipitation --> Season length --> Plant diversity
+path4.1_precip <- abs(SEM_PC[2,3]) * abs(SEM_PC[3,10])
+#4.1.1 Precipitation --> Season length --> Plant diversity --> PO4
+path4.1.1_precip <- abs(SEM_PC[2,3]) * abs(SEM_PC[3,10]) * abs(SEM_PC[10,13])
+#14.2 Precipitation --> Season length --> Shrub cover
+path4.2_precip <- abs(SEM_PC[2,3]) * abs(SEM_PC[3,8])
+#4.2.1 Precipitation --> Season length --> Shrub cover --> Circadian SM
+path4.2.1_precip <- abs(SEM_PC[2,3]) * abs(SEM_PC[3,8]) * abs(SEM_PC[8,6])
+#4.3 Precipitation --> Season length --> pH
+path4.3_precip <- abs(SEM_PC[2,3]) * abs(SEM_PC[3,12])
+#5 Precipitation --> Winter temperature
+path5_precip <- abs(SEM_PC[2,4])
+#5.1 Precipitation --> Winter temperature --> Circadian SM
+path5.1_precip <- abs(SEM_PC[2,4]) * abs(SEM_PC[4,6])
+#5.2 Precipitation --> Winter temperature --> Bryophyte cover
+path5.2_precip <- abs(SEM_PC[2,4]) * abs(SEM_PC[4,9])
+#5.3 Precipitation --> Winter temperature --> Litter cover
+path5.3_precip <- abs(SEM_PC[2,4]) * abs(SEM_PC[4,11])
+#6 Precipitation --> Mean SM
+path6_precip <- abs(SEM_PC[2,5])
+
+#Make matrix that overlays the microbial matrix
+SEM_results <- as.matrix(read.table("SEM_results_5.0.txt", sep="\t",header=T, row.names=1))
+#Order: T.grid[1 or nothing], P.grid[1 or nothing], days_after_defrosting, winter T, meanSM, difSM, forb, woody, bryo, diversity, litter, pH, PO4, NO3
+sequence_total <- c(c(path1_temp + path4_precip), 
+              c(path2_temp + path5_precip),
+              path6_precip,
+              c(path1.2.1_temp + path2.1_temp + path4.2.1_precip + path5.1_precip),
+              path3_temp,
+              c(path1.2_temp + path4.2_precip),
+              c(path2.2_temp + path5.2_precip),
+              c(path1.1_temp + path4.1_precip),
+              c(path2.3_temp + path5.3_precip),
+              c(path1.3_temp + path4.3_precip),
+              c(path1.1.1_temp + path4.1.1_precip),
+              path3.1_temp)  #Leaving out T and P, because these are direct effects anyway
+indirect_pathways_total <- matrix(sequence_total, nrow = 12, ncol = 1)
+
+#Network figure including microbial clusters
+SEM_results_sub <- SEM_results[c(1:14, 19:25, 30:40), c(1:14, 19:25, 30:40)]
+SEM_results_sub[c(1:14),c(1:14)] <- 0
+network <- graph_from_adjacency_matrix(SEM_results_sub, weighted=T, mode="directed", diag=F)
+E(network)[weight > 0]$color<-"#0072B2"
+E(network)[weight < 0]$color<-"#D55E00"
+am.coord <- layout_in_circle(network, order = V(network))
+
+#Sum relative reads per sample per cluster
+Srel_rhizo <- ddply(MRel_rhizo_cluster, c("sample.code", "cluster"), summarise,
+                    srelreads = sum(sumrelreads, na.rm=TRUE))
+Srel_root <- ddply(MRel_root_cluster, c("sample.code", "cluster"), summarise,
+                   srelreads = sum(sumrelreads, na.rm=TRUE))
+
+#Calculate mean number of relative reads per cluster over all samples
+vsize_rhizo <- ddply(Srel_rhizo, c("cluster"), summarise,
+                     mrelreads = mean(srelreads, na.rm=TRUE))
+vsize_root <- ddply(Srel_root, c("cluster"), summarise,
+                    mrelreads = mean(srelreads, na.rm=TRUE))
+
+#Correct for few ASVs that were not in network, because of low occurrence
+vsize <- c(vsize_rhizo[1:7,]$mrelreads, vsize_root[1:11,]$mrelreads)
+vsize_perc <- c(vsize[1:7]/sum(vsize[1:7]), vsize[8:18]/sum(vsize[8:18]))
+
+#Make matrix
+vsize_matrix <- matrix(rep(vsize_perc,40, each = T), nrow=40, byrow=T)
+
+#Calculate summed effect sizes that clusters RECEIVED
+indirect_cluster <- colSums(abs(SEM_results[c(3:14),c(19:25,30:40)]) * 
+                              matrix(rep(indirect_pathways_total,18), nrow = 12, byrow=F)) #But probably it's nicer to just give the size of the clusters in the figure
+
+#Calculate total summed effect sizes that T and P had via mediators
+indirect_mediators <- rowSums( abs(SEM_results[c(3:14),c(19:25,30:40)]) * abs(vsize_matrix[c(3:14),]) *
+                                 matrix(rep(indirect_pathways_total,18), nrow = 12, byrow=F) )
+
+#Calculate summed indirect effects of Temp via:
+#1 Temperature --> Season length
+#1.1 Temperature --> Season length --> Plant diversity
+#1.1.1 Temperature --> Season length --> Plant diversity --> PO4
+#1.2 Temperature --> Season length --> Shrub cover
+#1.2.1 Temperature --> Season length --> Shrub cover --> Circadian SM
+#1.3 Temperature --> Season length --> pH
+#2 Temperature --> Winter temperature
+#2.1 Temperature --> Winter temperature --> Circadian SM
+#2.2 Temperature --> Winter temperature --> Bryophyte cover
+#2.3 Temperature --> Winter temperature --> Litter cover
+#3 Temperature --> Forb cover
+#3.1 Temperature --> Forb cover --> NO3
+sequence_T <-   c(c(path1_temp), 
+                  c(path2_temp),
+                  c(path1.2.1_temp + path2.1_temp),
+                  path3_temp,
+                  c(path1.2_temp),
+                  c(path2.2_temp),
+                  c(path1.1_temp),
+                  c(path2.3_temp),
+                  c(path1.3_temp),
+                  c(path1.1.1_temp),
+                  path3.1_temp)
+indirect_pathways_T <- matrix(sequence_T, nrow = 11, ncol = 1)
+
+#Sum indirect temperature pathways
+indirect_T <- sum( abs(SEM_results[c(3:4,6:14),c(19:25,30:40)]) * abs(vsize_matrix[c(3:4,6:14),]) *
+                     matrix(rep(indirect_pathways_T,18), nrow = 11, byrow=F) )
+
+#Calculate summed indirect effects of Precip: via pathways 5, 6                            
+#Precipitation
+#4 Precipitation --> Season length
+#4.1 Precipitation --> Season length --> Plant diversity
+#4.1.1 Precipitation --> Season length --> Plant diversity --> PO4
+#14.2 Precipitation --> Season length --> Shrub cover
+#4.2.1 Precipitation --> Season length --> Shrub cover --> Circadian SM
+#4.3 Precipitation --> Season length --> pH
+#5 Precipitation --> Winter temperature
+#5.1 Precipitation --> Winter temperature --> Circadian SM
+#5.2 Precipitation --> Winter temperature --> Bryophyte cover
+#5.3 Precipitation --> Winter temperature --> Litter cover
+#6 Precipitation --> Mean SM
+sequence_P<- c(c(path4_precip), 
+                    c(path5_precip),
+                    path6_precip,
+                    c(path4.2.1_precip + path5.1_precip),
+                    c(path4.2_precip),
+                    c(path5.2_precip),
+                    c(path4.1_precip),
+                    c(path5.3_precip),
+                    c(path4.3_precip),
+                    c(path4.1.1_precip))  #Leaving out T and P, because these are direct effects anyway
+indirect_pathways_P <- matrix(sequence_P, nrow = 10, ncol = 1)
+
+#Sum indirect precipitation pathways
+indirect_P <- sum( abs(SEM_results[c(3:6,8:13),c(19:25,30:40)]) * abs(vsize_matrix[c(3:6,8:13),]) *
+                     matrix(rep(indirect_pathways_P,18), nrow = 10, byrow=F) )
+
+#Calculate summed indirect effects of Temperature x Precipitation: via pathways 1 x 4, 2 x 5, and                             
+#Precipitation
+#1 Temperature --> Season length & 4 Precipitation --> Season length
+
+#2 Temperature --> Winter temperature & 5 Precipitation --> Winter temperature
+
+
+#4.1 Precipitation --> Season length --> Plant diversity
+#4.1.1 Precipitation --> Season length --> Plant diversity --> PO4
+#14.2 Precipitation --> Season length --> Shrub cover
+#4.2.1 Precipitation --> Season length --> Shrub cover --> Circadian SM
+#4.3 Precipitation --> Season length --> pH
+#5 Precipitation --> Winter temperature
+#5.1 Precipitation --> Winter temperature --> Circadian SM
+#5.2 Precipitation --> Winter temperature --> Bryophyte cover
+#5.3 Precipitation --> Winter temperature --> Litter cover
+#6 Precipitation --> Mean SM
+sequence_TP<- c(c(abs(SEM_PC[1,3]) * abs(SEM_PC[2,3])), #season length 
+               c(abs(SEM_PC[1,4]) * abs(SEM_PC[2,4])), #winter T
+               c((abs(SEM_PC[1,3]) * abs(SEM_PC[2,3]) * abs(SEM_PC[3,8]) * abs(SEM_PC[8,6])) + 
+                  (abs(SEM_PC[1,4]) * abs(SEM_PC[2,4]) * abs(SEM_PC[4,6]))), #circadian soil moisture
+               c(abs(SEM_PC[1,3]) * abs(SEM_PC[2,3]) * abs(SEM_PC[3,8])), #shrub cover
+               c(abs(SEM_PC[1,4]) * abs(SEM_PC[2,4]) * abs(SEM_PC[4,9])), #bryophyte cover
+               c(abs(SEM_PC[1,3]) * abs(SEM_PC[2,3]) * abs(SEM_PC[3,10])), #diversity
+               c(abs(SEM_PC[1,4]) * abs(SEM_PC[2,4]) * abs(SEM_PC[4,11])), #litter cover
+               c(abs(SEM_PC[1,3]) * abs(SEM_PC[2,3]) * abs(SEM_PC[3,12])), #pH
+               c(abs(SEM_PC[1,3]) * abs(SEM_PC[2,3]) * abs(SEM_PC[3,10]) * abs(SEM_PC[10,13])) ) #PO4
+indirect_pathways_TP <- matrix(sequence_TP, nrow = 9, ncol = 1)
+
+#Sum indirect precipitation pathways
+indirect_P <- sum( abs(SEM_results[c(3:6,8:13),c(19:25,30:40)]) * abs(vsize_matrix[c(3:6,8:13),]) *
+                     matrix(rep(indirect_pathways_P,18), nrow = 10, byrow=F) )
+
+#direct T and P
+direct_effects_total <- rowSums( abs(SEM_results[c(1:2),c(19:25,30:40)]) * abs(vsize_matrix[c(1:2),]) )
+
+#Direct + indirect effects T and P
+total_T <- direct_effects_total[1] + indirect_T
+total_P <- direct_effects_total[2] + indirect_P
+
+#Create matrix for figures
+deg <- c(direct_effects_total, indirect_mediators, vsize_perc)
+
+par(mar = c(0.1, 0.1, 0.1, 0.1))
+radian.rescale <- function(x, start=0, direction=1) {
+  c.rotate <- function(x) (x + start) %% (2 * pi) * direction
+  c.rotate(scales::rescale(x, c(0, 2 * pi), range(x)))
+}
+n <- 32
+lab.locs <- radian.rescale(x=1:n, direction=-1, start=0)
+
+plot(network, vertex.size = deg*50, edge.width=abs(E(network)$weight)*5, edge.curved=.1, layout = am.coord,
+     vertex.color = adjustcolor(c(rep("darkred", 2), rep("darkgreen", 9), rep("grey20", 7), rep("grey80", 11)), alpha.f = .5), vertex.frame.color = "black", 
+     #vertex.label.font=c(1, 2, 1, 2, 1, 2, 1, 2, 1, rep(1, 21)), 
+     #vertex.label.color=c("black", "#0072B2", "black", "#0072B2", "black", "#0072B2", "black", "#009E73", "black", rep("black", 21)), vertex.label.degree=lab.locs, vertex.label.dist=1.5,
+     vertex.label.color=c("black"), 
+     vertex.label.degree=lab.locs, vertex.label.dist=1.5,
+     vertex.label.cex=c(0.6))
+p <- recordPlot()
+prow <- plot_grid(p, labels=c(""), align="hv", label_size=12, vjust=1.1, rel_heights = c(1,2))
+prow
+
+
+######B - Calculate for rhizosphere and root x fungi and prokaryotes separately
+#Make vertice size matrices
+vsize_tot <- vsize_matrix
+
+#Load rel abundance rhizo and root
+load("Data_rhizo.Rda")
+load("Data_root.Rda")
+
+#Make prokaryote and fungi column
+Data_rhizo$group <- factor(revalue(Data_rhizo$kingdom, c("Bacteria" = "16S", "Archaea" = "16S", 
+                                                         "Fungi" = "ITS")))
+Data_root$group <- factor(revalue(Data_root$kingdom, c("Bacteria" = "16S", "Archaea" = "16S", 
+                                                       "Fungi" = "ITS")))
+
+#Sum per cluster per sample per group
+SCount_rhizo <- ddply(Data_rhizo, c("sample", "cluster", "group"), summarise,
+                      srelreads = sum(rel_reads, na.rm=TRUE)
+)
+SCount_rhizo
+
+SCount_root <- ddply(Data_root, c("sample", "cluster", "group"), summarise,
+                     srelreads = sum(rel_reads, na.rm=TRUE)
+)
+SCount_root
+
+#Calculate average relative abundance per cluster per group
+vsize_rhizo_group <- ddply(SCount_rhizo, c("cluster", "group"), summarise,
+                           mrelreads = mean(srelreads, na.rm=TRUE)
+)
+vsize_rhizo_group
+
+vsize_root_group <- ddply(SCount_root, c("cluster", "group"), summarise,
+                          mrelreads = mean(srelreads, na.rm=TRUE)
+)
+vsize_root_group
+
+#Check
+sum(vsize_rhizo_group$mrelreads) #2, because 1 16S set and 1 ITS set
+sum(vsize_root_group$mrelreads) #Where did this ~5% go missing? Clusters with NAs?
+
+#Create matrices
+vsize_16S_rel <- c(vsize_rhizo_group[which(vsize_rhizo_group$group == "16S"),]$mrelreads, 
+                   vsize_root_group[which(vsize_root_group$group == "16S"),]$mrelreads)
+vsize_ITS_rel <- c(vsize_rhizo_group[which(vsize_rhizo_group$group == "ITS"),]$mrelreads, 
+                   vsize_root_group[which(vsize_root_group$group == "ITS"),]$mrelreads[1], 0, 
+                   vsize_root_group[which(vsize_root_group$group == "ITS"),]$mrelreads[-1], 0) #ITS root clusters 2 and 11 are 0
+
+vsize_16S <- matrix(rep(vsize_16S_rel,40, each = T), nrow=40, byrow=T)
+vsize_ITS <- matrix(rep(vsize_ITS_rel,40, each = T), nrow=40, byrow=T)
+
+#Make matrix with explained variation per cluster (should be similar to the vsize_matrix)
+explained_var <- read.table("Explained_variation_clusters_5.0.txt", sep="\t",header=T)
+
+#Create matrix
+R2marginal_matrix <- matrix(rep(explained_var$R2_marginal,40, each = T), nrow=40, byrow=T)
+R2random_matrix <- matrix(rep(explained_var$R2_random,40, each = T), nrow=40, byrow=T)
+R2unexplained_matrix <- matrix(rep(1 - explained_var$R2_conditional,40, each = T), nrow=40, byrow=T)
+
+#Combine with vsize matrices
+vsize_tot_R2marginal <- vsize_tot * R2marginal_matrix
+vsize_tot_R2random <- vsize_tot * R2random_matrix
+vsize_tot_R2unexplained <- vsize_tot * R2unexplained_matrix
+
+vsize_16S_R2marginal <- vsize_16S * R2marginal_matrix
+vsize_16S_R2random <- vsize_16S * R2random_matrix
+vsize_16S_R2unexplained <- vsize_16S * R2unexplained_matrix
+
+vsize_ITS_R2marginal <- vsize_ITS * R2marginal_matrix
+vsize_ITS_R2random <- vsize_ITS * R2random_matrix
+vsize_ITS_R2unexplained <- vsize_ITS * R2unexplained_matrix
+
+
+######For 16S#####
+#Overview figure with interaction
+#Rhizosphere microbiome overview calculation
+#Direct effects T and P
+direct_effects_rhizo_tot <- rowSums( abs(SEM_results[c(1:2),c(19:25)]) * abs(vsize_16S[c(1:2),c(1:7)]))
+direct_effects_rhizo_mar <- rowSums( abs(SEM_results[c(1:2),c(19:25)]) * abs(vsize_16S_R2marginal[c(1:2),c(1:7)]) )
+direct_effects_rhizo_ran <- rowSums( abs(SEM_results[c(1:2),c(19:25)]) * abs(vsize_16S_R2random[c(1:2),c(1:7)]) )
+direct_effects_rhizo_un <- rowSums( abs(SEM_results[c(1:2),c(19:25)]) * abs(vsize_16S_R2unexplained[c(1:2),c(1:7)]) )
+
+#Indirect effects T and P together including interaction pathways
+indirect_mediators_rhizo_tot_incl <- rowSums( abs(SEM_results[c(3:14),c(19:25)]) * abs(vsize_16S[c(3:14),c(1:7)]) *
+                                           matrix(rep(indirect_pathways_total,7), nrow = 12, byrow=F) )
+indirect_mediators_rhizo_mar_incl <- rowSums( abs(SEM_results[c(3:14),c(19:25)]) * abs(vsize_16S_R2marginal[c(3:14),c(1:7)]) *
+                                           matrix(rep(indirect_pathways_total,7), nrow = 12, byrow=F) )
+indirect_mediators_rhizo_ran_incl <- rowSums( abs(SEM_results[c(3:14),c(19:25)]) * abs(vsize_16S_R2random[c(3:14),c(1:7)]) *
+                                           matrix(rep(indirect_pathways_total,7), nrow = 12, byrow=F) )
+indirect_mediators_rhizo_un_incl <- rowSums( abs(SEM_results[c(3:14),c(19:25)]) * abs(vsize_16S_R2unexplained[c(3:14),c(1:7)]) *
+                                          matrix(rep(indirect_pathways_total,7), nrow = 12, byrow=F) )
+
+#Indirect effects T and P together excluding interaction pathways
+indirect_mediators_rhizo_tot_excl <- rowSums( abs(SEM_results[c(5,7,14),c(19:25)]) * abs(vsize_16S[c(5,7,14),c(1:7)]) *
+                                                matrix(rep(indirect_pathways_total[c(3,5,12)],7), nrow = 3, byrow=F) )
+indirect_mediators_rhizo_mar_excl <- rowSums( abs(SEM_results[c(5,7,14),c(19:25)]) * abs(vsize_16S_R2marginal[c(5,7,14),c(1:7)]) *
+                                                matrix(rep(indirect_pathways_total[c(3,5,12)],7), nrow = 3, byrow=F) )
+indirect_mediators_rhizo_ran_excl <- rowSums( abs(SEM_results[c(5,7,14),c(19:25)]) * abs(vsize_16S_R2random[c(5,7,14),c(1:7)]) *
+                                                matrix(rep(indirect_pathways_total[c(3,5,12)],7), nrow = 3, byrow=F) )
+indirect_mediators_rhizo_un_excl <- rowSums( abs(SEM_results[c(5,7,14),c(19:25)]) * abs(vsize_16S_R2unexplained[c(5,7,14),c(1:7)]) *
+                                               matrix(rep(indirect_pathways_total[c(3,5,12)],7), nrow = 3, byrow=F) )
+
+#Indirect effects TP interaction
+indirect_mediators_rhizo_tot_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_16S[c(3:4,6,8:13),c(1:7)]) *
+                                           matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+indirect_mediators_rhizo_mar_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_16S_R2marginal[c(3:4,6,8:13),c(1:7)]) *
+                                           matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+indirect_mediators_rhizo_ran_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_16S_R2random[c(3:4,6,8:13),c(1:7)]) *
+                                           matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+indirect_mediators_rhizo_un_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_16S_R2unexplained[c(3:4,6,8:13),c(1:7)]) *
+                                          matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+
+#Indirect T including interaction
+indirect_T_rhizo_tot_incl <- sum( abs(SEM_results[c(3:4,6:14),c(19:25)]) * abs(vsize_16S[c(3:4,6:14),c(1:7)]) *
+                               matrix(rep(indirect_pathways_T,7), nrow = 11, byrow=F) )
+indirect_T_rhizo_mar_incl <- sum( abs(SEM_results[c(3:4,6:14),c(19:25)]) * abs(vsize_16S_R2marginal[c(3:4,6:14),c(1:7)]) *
+                               matrix(rep(indirect_pathways_T,7), nrow = 11, byrow=F) )
+indirect_T_rhizo_ran_incl <- sum( abs(SEM_results[c(3:4,6:14),c(19:25)]) * abs(vsize_16S_R2random[c(3:4,6:14),c(1:7)]) *
+                               matrix(rep(indirect_pathways_T,7), nrow = 11, byrow=F) )
+indirect_T_rhizo_un_incl <- sum( abs(SEM_results[c(3:4,6:14),c(19:25)]) * abs(vsize_16S_R2unexplained[c(3:4,6:14),c(1:7)]) *
+                              matrix(rep(indirect_pathways_T,7), nrow = 11, byrow=F) )
+
+#Indirect T excluding interaction (pathways unique to temperature)
+indirect_T_rhizo_tot_excl <- sum( abs(SEM_results[c(7,14),c(19:25)]) * abs(vsize_16S[c(7,14),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_T[c(4,11)],7), nrow = 2, byrow=F) )
+indirect_T_rhizo_mar_excl <- sum( abs(SEM_results[c(7,14),c(19:25)]) * abs(vsize_16S_R2marginal[c(7,14),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_T[c(4,11)],7), nrow = 2, byrow=F) )
+indirect_T_rhizo_ran_excl <- sum( abs(SEM_results[c(7,14),c(19:25)]) * abs(vsize_16S_R2random[c(7,14),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_T[c(4,11)],7), nrow = 2, byrow=F) )
+indirect_T_rhizo_un_excl <- sum( abs(SEM_results[c(7,14),c(19:25)]) * abs(vsize_16S_R2unexplained[c(7,14),c(1:7)]) *
+                                   matrix(rep(indirect_pathways_T[c(4,11)],7), nrow = 2, byrow=F) )
+
+#Indirect P including interaction
+indirect_P_rhizo_tot_incl <- sum( abs(SEM_results[c(3:6,8:13),c(19:25)]) * abs(vsize_16S[c(3:6,8:13),c(1:7)]) *
+                               matrix(rep(indirect_pathways_P,7), nrow = 10, byrow=F) )
+indirect_P_rhizo_mar_incl <- sum( abs(SEM_results[c(3:6,8:13),c(19:25)]) * abs(vsize_16S_R2marginal[c(3:6,8:13),c(1:7)]) *
+                               matrix(rep(indirect_pathways_P,7), nrow = 10, byrow=F) )
+indirect_P_rhizo_ran_incl <- sum( abs(SEM_results[c(3:6,8:13),c(19:25)]) * abs(vsize_16S_R2random[c(3:6,8:13),c(1:7)]) *
+                               matrix(rep(indirect_pathways_P,7), nrow = 10, byrow=F) )
+indirect_P_rhizo_un_incl <- sum( abs(SEM_results[c(3:6,8:13),c(19:25)]) * abs(vsize_16S_R2unexplained[c(3:6,8:13),c(1:7)]) *
+                              matrix(rep(indirect_pathways_P,7), nrow = 10, byrow=F) )
+
+#Indirect P excluding interaction (unique to precipitation)
+indirect_P_rhizo_tot_excl <- sum( abs(SEM_results[c(5),c(19:25)]) * abs(vsize_16S[c(5),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_P[3],7), nrow = 1, byrow=F) )
+indirect_P_rhizo_mar_excl <- sum( abs(SEM_results[c(5),c(19:25)]) * abs(vsize_16S_R2marginal[c(5),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_P[3],7), nrow = 1, byrow=F) )
+indirect_P_rhizo_ran_excl <- sum( abs(SEM_results[c(5),c(19:25)]) * abs(vsize_16S_R2random[c(5),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_P[3],7), nrow = 1, byrow=F) )
+indirect_P_rhizo_un_excl <- sum( abs(SEM_results[c(5),c(19:25)]) * abs(vsize_16S_R2unexplained[c(5),c(1:7)]) *
+                                   matrix(rep(indirect_pathways_P[3],7), nrow = 1, byrow=F) )
+
+#Interaction T and P pathways (pathways affected by both: T x P pathways)
+indirect_TP_rhizo_tot <- sum( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_16S[c(3:4,6,8:13),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+indirect_TP_rhizo_mar <- sum( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_16S_R2marginal[c(3:4,6,8:13),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+indirect_TP_rhizo_ran <- sum( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_16S_R2random[c(3:4,6,8:13),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+indirect_TP_rhizo_un <- sum( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_16S_R2unexplained[c(3:4,6,8:13),c(1:7)]) *
+                                   matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+
+#Sum rhizosphere contributions excluding interaction part
+#Temperature
+total_T_rhizo_tot_excl <- direct_effects_rhizo_tot[1] + indirect_T_rhizo_tot_excl
+total_T_rhizo_mar_excl <- direct_effects_rhizo_mar[1] + indirect_T_rhizo_mar_excl
+total_T_rhizo_ran_excl <- direct_effects_rhizo_ran[1] + indirect_T_rhizo_ran_excl
+total_T_rhizo_un_excl <- direct_effects_rhizo_un[1] + indirect_T_rhizo_un_excl
+total_T_rhizo_tot_excl
+sum(total_T_rhizo_mar_excl,total_T_rhizo_ran_excl,total_T_rhizo_un_excl)
+#check
+
+#Precipitation
+total_P_rhizo_tot_excl <- direct_effects_rhizo_tot[2] + indirect_P_rhizo_tot_excl
+total_P_rhizo_mar_excl <- direct_effects_rhizo_mar[2] + indirect_P_rhizo_mar_excl
+total_P_rhizo_ran_excl <- direct_effects_rhizo_ran[2] + indirect_P_rhizo_ran_excl
+total_P_rhizo_un_excl <- direct_effects_rhizo_un[2] + indirect_P_rhizo_un_excl
+total_P_rhizo_tot_excl
+sum(total_P_rhizo_mar_excl,total_P_rhizo_ran_excl,total_P_rhizo_un_excl)
+#check
+
+#Interaction
+total_TP_rhizo_tot <- indirect_TP_rhizo_tot
+total_TP_rhizo_mar <- indirect_TP_rhizo_mar
+total_TP_rhizo_ran <- indirect_TP_rhizo_ran
+total_TP_rhizo_un <- indirect_TP_rhizo_un
+total_TP_rhizo_tot
+sum(total_TP_rhizo_mar,total_TP_rhizo_ran,total_TP_rhizo_un)
+#check
+
+#All
+total_rhizo_tot_excl <- total_T_rhizo_tot_excl + total_P_rhizo_tot_excl + total_TP_rhizo_tot
+total_rhizo_mar_excl <- total_T_rhizo_mar_excl + total_P_rhizo_mar_excl + total_TP_rhizo_mar
+total_rhizo_ran_excl <- total_T_rhizo_ran_excl + total_P_rhizo_ran_excl + total_TP_rhizo_ran
+total_rhizo_un_excl <- total_T_rhizo_un_excl + total_P_rhizo_un_excl + total_TP_rhizo_un
+total_rhizo_tot_excl
+sum(total_rhizo_mar_excl,total_rhizo_ran_excl,total_rhizo_un_excl)
+#check
+
+
+#Root microbiome overview calculation
+#Direct effects T and P
+direct_effects_root_tot <- rowSums( abs(SEM_results[c(1:2),c(30:40)]) * abs(vsize_16S[c(1:2),c(8:18)]))
+direct_effects_root_mar <- rowSums( abs(SEM_results[c(1:2),c(30:40)]) * abs(vsize_16S_R2marginal[c(1:2),c(8:18)]) )
+direct_effects_root_ran <- rowSums( abs(SEM_results[c(1:2),c(30:40)]) * abs(vsize_16S_R2random[c(1:2),c(8:18)]) )
+direct_effects_root_un <- rowSums( abs(SEM_results[c(1:2),c(30:40)]) * abs(vsize_16S_R2unexplained[c(1:2),c(8:18)]) )
+
+#Indirect effects T and P together including interaction pathways
+indirect_mediators_root_tot_incl <- rowSums( abs(SEM_results[c(3:14),c(30:40)]) * abs(vsize_16S[c(3:14),c(8:18)]) *
+                                                matrix(rep(indirect_pathways_total,11), nrow = 12, byrow=F) )
+indirect_mediators_root_mar_incl <- rowSums( abs(SEM_results[c(3:14),c(30:40)]) * abs(vsize_16S_R2marginal[c(3:14),c(8:18)]) *
+                                                matrix(rep(indirect_pathways_total,11), nrow = 12, byrow=F) )
+indirect_mediators_root_ran_incl <- rowSums( abs(SEM_results[c(3:14),c(30:40)]) * abs(vsize_16S_R2random[c(3:14),c(8:18)]) *
+                                                matrix(rep(indirect_pathways_total,11), nrow = 12, byrow=F) )
+indirect_mediators_root_un_incl <- rowSums( abs(SEM_results[c(3:14),c(30:40)]) * abs(vsize_16S_R2unexplained[c(3:14),c(8:18)]) *
+                                               matrix(rep(indirect_pathways_total,11), nrow = 12, byrow=F) )
+
+#Indirect effects T and P together excluding interaction pathways
+indirect_mediators_root_tot_excl <- rowSums( abs(SEM_results[c(5,7,14),c(30:40)]) * abs(vsize_16S[c(5,7,14),c(8:18)]) *
+                                                matrix(rep(indirect_pathways_total[c(3,5,12)],11), nrow = 3, byrow=F) )
+indirect_mediators_root_mar_excl <- rowSums( abs(SEM_results[c(5,7,14),c(30:40)]) * abs(vsize_16S_R2marginal[c(5,7,14),c(8:18)]) *
+                                                matrix(rep(indirect_pathways_total[c(3,5,12)],11), nrow = 3, byrow=F) )
+indirect_mediators_root_ran_excl <- rowSums( abs(SEM_results[c(5,7,14),c(30:40)]) * abs(vsize_16S_R2random[c(5,7,14),c(8:18)]) *
+                                                matrix(rep(indirect_pathways_total[c(3,5,12)],11), nrow = 3, byrow=F) )
+indirect_mediators_root_un_excl <- rowSums( abs(SEM_results[c(5,7,14),c(30:40)]) * abs(vsize_16S_R2unexplained[c(5,7,14),c(8:18)]) *
+                                               matrix(rep(indirect_pathways_total[c(3,5,12)],11), nrow = 3, byrow=F) )
+
+#Indirect effects TP interaction
+indirect_mediators_root_tot_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_16S[c(3:4,6,8:13),c(8:18)]) *
+                                              matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+indirect_mediators_root_mar_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_16S_R2marginal[c(3:4,6,8:13),c(8:18)]) *
+                                              matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+indirect_mediators_root_ran_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_16S_R2random[c(3:4,6,8:13),c(8:18)]) *
+                                              matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+indirect_mediators_root_un_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_16S_R2unexplained[c(3:4,6,8:13),c(8:18)]) *
+                                             matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+
+#Indirect T including interaction
+indirect_T_root_tot_incl <- sum( abs(SEM_results[c(3:4,6:14),c(30:40)]) * abs(vsize_16S[c(3:4,6:14),c(8:18)]) *
+                                    matrix(rep(indirect_pathways_T,11), nrow = 11, byrow=F) )
+indirect_T_root_mar_incl <- sum( abs(SEM_results[c(3:4,6:14),c(30:40)]) * abs(vsize_16S_R2marginal[c(3:4,6:14),c(8:18)]) *
+                                    matrix(rep(indirect_pathways_T,11), nrow = 11, byrow=F) )
+indirect_T_root_ran_incl <- sum( abs(SEM_results[c(3:4,6:14),c(30:40)]) * abs(vsize_16S_R2random[c(3:4,6:14),c(8:18)]) *
+                                    matrix(rep(indirect_pathways_T,11), nrow = 11, byrow=F) )
+indirect_T_root_un_incl <- sum( abs(SEM_results[c(3:4,6:14),c(30:40)]) * abs(vsize_16S_R2unexplained[c(3:4,6:14),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_T,11), nrow = 11, byrow=F) )
+
+#Indirect T excluding interaction (pathways unique to temperature)
+indirect_T_root_tot_excl <- sum( abs(SEM_results[c(7,14),c(30:40)]) * abs(vsize_16S[c(7,14),c(8:18)]) *
+                                    matrix(rep(indirect_pathways_T[c(4,11)],11), nrow = 2, byrow=F) )
+indirect_T_root_mar_excl <- sum( abs(SEM_results[c(7,14),c(30:40)]) * abs(vsize_16S_R2marginal[c(7,14),c(8:18)]) *
+                                    matrix(rep(indirect_pathways_T[c(4,11)],11), nrow = 2, byrow=F) )
+indirect_T_root_ran_excl <- sum( abs(SEM_results[c(7,14),c(30:40)]) * abs(vsize_16S_R2random[c(7,14),c(8:18)]) *
+                                    matrix(rep(indirect_pathways_T[c(4,11)],11), nrow = 2, byrow=F) )
+indirect_T_root_un_excl <- sum( abs(SEM_results[c(7,14),c(30:40)]) * abs(vsize_16S_R2unexplained[c(7,14),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_T[c(4,11)],11), nrow = 2, byrow=F) )
+
+#Indirect P including interaction
+indirect_P_root_tot_incl <- sum( abs(SEM_results[c(3:6,8:13),c(30:40)]) * abs(vsize_16S[c(3:6,8:13),c(8:18)]) *
+                                    matrix(rep(indirect_pathways_P,11), nrow = 10, byrow=F) )
+indirect_P_root_mar_incl <- sum( abs(SEM_results[c(3:6,8:13),c(30:40)]) * abs(vsize_16S_R2marginal[c(3:6,8:13),c(8:18)]) *
+                                    matrix(rep(indirect_pathways_P,11), nrow = 10, byrow=F) )
+indirect_P_root_ran_incl <- sum( abs(SEM_results[c(3:6,8:13),c(30:40)]) * abs(vsize_16S_R2random[c(3:6,8:13),c(8:18)]) *
+                                    matrix(rep(indirect_pathways_P,11), nrow = 10, byrow=F) )
+indirect_P_root_un_incl <- sum( abs(SEM_results[c(3:6,8:13),c(30:40)]) * abs(vsize_16S_R2unexplained[c(3:6,8:13),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_P,11), nrow = 10, byrow=F) )
+
+#Indirect P excluding interaction (unique to precipitation)
+indirect_P_root_tot_excl <- sum( abs(SEM_results[c(5),c(30:40)]) * abs(vsize_16S[c(5),c(8:18)]) *
+                                    matrix(rep(indirect_pathways_P[3],11), nrow = 1, byrow=F) )
+indirect_P_root_mar_excl <- sum( abs(SEM_results[c(5),c(30:40)]) * abs(vsize_16S_R2marginal[c(5),c(8:18)]) *
+                                    matrix(rep(indirect_pathways_P[3],11), nrow = 1, byrow=F) )
+indirect_P_root_ran_excl <- sum( abs(SEM_results[c(5),c(30:40)]) * abs(vsize_16S_R2random[c(5),c(8:18)]) *
+                                    matrix(rep(indirect_pathways_P[3],11), nrow = 1, byrow=F) )
+indirect_P_root_un_excl <- sum( abs(SEM_results[c(5),c(30:40)]) * abs(vsize_16S_R2unexplained[c(5),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_P[3],11), nrow = 1, byrow=F) )
+
+#Interaction T and P pathways (pathways affected by both: T x P pathways)
+indirect_TP_root_tot <- sum( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_16S[c(3:4,6,8:13),c(8:18)]) *
+                                matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+indirect_TP_root_mar <- sum( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_16S_R2marginal[c(3:4,6,8:13),c(8:18)]) *
+                                matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+indirect_TP_root_ran <- sum( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_16S_R2random[c(3:4,6,8:13),c(8:18)]) *
+                                matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+indirect_TP_root_un <- sum( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_16S_R2unexplained[c(3:4,6,8:13),c(8:18)]) *
+                               matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+
+#Sum root contributions excluding interaction part
+#Temperature
+total_T_root_tot_excl <- direct_effects_root_tot[1] + indirect_T_root_tot_excl
+total_T_root_mar_excl <- direct_effects_root_mar[1] + indirect_T_root_mar_excl
+total_T_root_ran_excl <- direct_effects_root_ran[1] + indirect_T_root_ran_excl
+total_T_root_un_excl <- direct_effects_root_un[1] + indirect_T_root_un_excl
+total_T_root_tot_excl
+sum(total_T_root_mar_excl,total_T_root_ran_excl,total_T_root_un_excl)
+#check
+
+#Precipitation
+total_P_root_tot_excl <- direct_effects_root_tot[2] + indirect_P_root_tot_excl
+total_P_root_mar_excl <- direct_effects_root_mar[2] + indirect_P_root_mar_excl
+total_P_root_ran_excl <- direct_effects_root_ran[2] + indirect_P_root_ran_excl
+total_P_root_un_excl <- direct_effects_root_un[2] + indirect_P_root_un_excl
+total_P_root_tot_excl
+sum(total_P_root_mar_excl,total_P_root_ran_excl,total_P_root_un_excl)
+#check
+
+#Interaction
+total_TP_root_tot <- indirect_TP_root_tot
+total_TP_root_mar <- indirect_TP_root_mar
+total_TP_root_ran <- indirect_TP_root_ran
+total_TP_root_un <- indirect_TP_root_un
+total_TP_root_tot
+sum(total_TP_root_mar,total_TP_root_ran,total_TP_root_un)
+#check
+
+#All
+total_root_tot_excl <- total_T_root_tot_excl + total_P_root_tot_excl + total_TP_root_tot
+total_root_mar_excl <- total_T_root_mar_excl + total_P_root_mar_excl + total_TP_root_mar
+total_root_ran_excl <- total_T_root_ran_excl + total_P_root_ran_excl + total_TP_root_ran
+total_root_un_excl <- total_T_root_un_excl + total_P_root_un_excl + total_TP_root_un
+total_root_tot_excl
+sum(total_root_mar_excl,total_root_ran_excl,total_root_un_excl)
+#check
+
+#Convert to percentages overall
+group <- c("T_rhizo", "P_rhizo", "TP_rhizo", "random_rhizo", "unexplained_rhizo", "T_root", "P_root", "TP_root", "random_root", "unexplained_root")
+figA_perc_y <- c(total_T_rhizo_mar_excl/total_rhizo_tot_excl, total_P_rhizo_mar_excl/total_rhizo_tot_excl, total_TP_rhizo_mar/total_rhizo_tot_excl,
+                 total_rhizo_ran_excl/total_rhizo_tot_excl, total_rhizo_un_excl/total_rhizo_tot_excl, 
+                 total_T_root_mar_excl/total_root_tot_excl, total_P_root_mar_excl/total_root_tot_excl, total_TP_root_mar/total_root_tot_excl,
+                 total_root_ran_excl/total_root_tot_excl, total_root_un_excl/total_root_tot_excl)
+figA_data_16S <- data.frame(group, figA_perc_y)
+figA_data_16S$group <- factor(figA_data_16S$group, levels=c("T_rhizo", "P_rhizo", "TP_rhizo", "random_rhizo", "unexplained_rhizo", "T_root", "P_root", "TP_root", "random_root", "unexplained_root"), ordered=TRUE)
+figA_data_16S$compartment <- c("Rhizosphere", "Rhizosphere", "Rhizosphere", "Rhizosphere", "Rhizosphere", "Root", "Root", "Root", "Root", "Root")
+figA_data_16S$label <- c("Temperature", "Precipitation", "Joint", "Random", "Unexplained", 
+                         "Temperature", "Precipitation", "Joint", "Random", "Unexplained")
+figA_data_16S$label <- factor(figA_data_16S$label, levels=c("Temperature", "Precipitation", "Joint", "Random", "Unexplained"))
+
+#Figure with stacked bars
+pairPalette <- c("#E31A1C", "#1F78B4", "#6A3D9A", "gray60", "lightgrey", "#A6CEE3", "#33A02C","#B2DF8A",  "#FB9A99",
+                 "#FF7F00",  "#6A3D9A","#CAB2D6",  "#B15928", "#FFFF99", "black") # "#E31A1C", "#1F78B4", "#FFCC00"
+
+figA_data_16S_rhizo <- figA_data_16S[which(figA_data_16S$compartment == "Rhizosphere"),]
+figA_data_16S_root <- figA_data_16S[which(figA_data_16S$compartment == "Root"),]
+
+plotA_16S_rhizo <- ggplot(figA_data_16S_rhizo, aes(x = "none", y=figA_perc_y, fill=label, group = group)) +
+  #facet_wrap(~ compartment) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  ggtitle("Prokaryotes") +
+  #theme(axis.text.x = element_text(angle = 45, hjust=1), legend.title=element_text(size=10)) +
+  labs(x= "" , y="Variation")+
+  #scale_fill_brewer(palette = "Paired")+
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values=pairPalette) +
+  theme(axis.text.x=element_blank()) +
+  scale_x_discrete(expand = c(0.3, 0.3)) +
+  theme(legend.spacing.y = unit(0.25, 'cm'))  +
+  ## important additional element
+  guides(fill = guide_legend(byrow = TRUE, title = "Explained by\n(combined pathways\nrelating to)"))
+plotA_16S_rhizo
+
+plotA_16S_root <- ggplot(figA_data_16S_root, aes(x = "none", y=figA_perc_y, fill=label, group = group)) +
+  #facet_wrap(~ compartment) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  ggtitle("Prokaryotes") +
+  #theme(axis.text.x = element_text(angle = 45, hjust=1), legend.title=element_text(size=10)) +
+  labs(x= "" , y="Variation")+
+  #scale_fill_brewer(palette = "Paired")+
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values=pairPalette) +
+  theme(axis.text.x=element_blank()) +
+  scale_x_discrete(expand = c(0.3, 0.3)) +
+  theme(legend.spacing.y = unit(0.25, 'cm'))  +
+  ## important additional element
+  guides(fill = guide_legend(byrow = TRUE, title = "Explained by\n(combined pathways\nrelating to)"))
+plotA_16S_root
+
+#####per pathways 16S#####
+#Calculate percentages rhizosphere
+group <- c("Temperature", "Precipitation", "Start growing season", "Winter temperature", "Avg soil moisture", "Circadian soil moisture",
+           "Forb cover", "Shrub cover", "Bryophyte cover", "Plant diversity", "Litter cover", "Soil pH", "Soil PO4", "Soil NO3")
+figB_perc_y <- c(direct_effects_rhizo_mar, indirect_mediators_rhizo_mar_TP[1:2], indirect_mediators_rhizo_mar_excl[1], indirect_mediators_rhizo_mar_TP[3],
+                 indirect_mediators_rhizo_mar_excl[2], indirect_mediators_rhizo_mar_TP[4:9], indirect_mediators_rhizo_mar_excl[3])/
+                  sum(direct_effects_rhizo_mar, indirect_mediators_rhizo_mar_TP, indirect_mediators_rhizo_mar_excl)
+figB_data_16S <- data.frame(group, figB_perc_y)
+figB_data_16S$label <- c("Temperature", "Precipitation", "Start growing season", "Winter temperature", "Avg soil moisture", "Circadian soil moisture",
+                     "Forb cover", "Shrub cover", "Bryophyte cover", "Plant diversity", "Litter cover", "Soil pH", "Soil PO4", "Soil NO3")
+figB_data_16S$label <- factor(figB_data_16S$label, levels=c("Temperature", "Precipitation", "Start growing season", "Winter temperature", "Avg soil moisture", "Circadian soil moisture",
+                                                    "Forb cover", "Shrub cover", "Bryophyte cover", "Plant diversity", "Litter cover", "Soil pH", "Soil PO4", "Soil NO3"), ordered=TRUE)
+
+#Calculate percentages root
+group <- c("Temperature", "Precipitation", "Start growing season", "Winter temperature", "Avg soil moisture", "Circadian soil moisture",
+           "Forb cover", "Shrub cover", "Bryophyte cover", "Plant diversity", "Litter cover", "Soil pH", "Soil PO4", "Soil NO3")
+figC_perc_y <- c(direct_effects_root_mar, indirect_mediators_root_mar_TP[1:2], indirect_mediators_root_mar_excl[1], indirect_mediators_root_mar_TP[3],
+                 indirect_mediators_root_mar_excl[2], indirect_mediators_root_mar_TP[4:9], indirect_mediators_root_mar_excl[3])/
+                  sum(direct_effects_root_mar, indirect_mediators_root_mar_TP, indirect_mediators_root_mar_excl)
+figC_data_16S <- data.frame(group, figC_perc_y)
+figC_data_16S$group <- row.names(figC_data_16S)
+figC_data_16S$label <- c("Temperature", "Precipitation", "Start growing season", "Winter temperature", "Avg soil moisture", "Circadian soil moisture",
+                         "Forb cover", "Shrub cover", "Bryophyte cover", "Plant diversity", "Litter cover", "Soil pH", "Soil PO4", "Soil NO3")
+figC_data_16S$label <- factor(figC_data_16S$label, levels=c("Temperature", "Precipitation", "Start growing season", "Winter temperature", "Avg soil moisture", "Circadian soil moisture",
+                                                    "Forb cover", "Shrub cover", "Bryophyte cover", "Plant diversity", "Litter cover", "Soil pH", "Soil PO4", "Soil NO3"), ordered=TRUE)
+
+#Rhizosphere plotB
+pairPalette <- c("#E31A1C", "#1F78B4", "#FDBF6F", "#FF7F00", "#CAB2D6", "#CC33CC","#B2DF8A", "#66C2A5", "#33A02C", 
+                 "#FB9A99", "#B15928", "#A6CEE3", "#FFFF99", "grey20")
+
+plotB_16S_rhizo <- ggplot(figB_data_16S, aes(x = "none", y=figB_perc_y, fill=label)) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  ggtitle("Prokaryotes") +
+  guides(fill=guide_legend(title="Explained by\n(final predictor)")) +
+  #theme(axis.text.x = element_text(angle = 45, hjust=1), legend.title=element_text(size=10)) +
+  labs(x= "" , y="Explained variation")+
+  #scale_fill_brewer(palette = "Paired")+
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values=pairPalette) +
+  theme(axis.text.x=element_blank()) +
+  scale_x_discrete(expand = c(0.3, 0.3))
+plotB_16S_rhizo
+
+#Root plotC
+plotC_16S_root <- ggplot(figC_data_16S, aes(x = "none", y=figC_perc_y, fill=label)) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  ggtitle("Prokaryotes") +
+  guides(fill=guide_legend(title="Explained by\n(final predictor)")) +
+  #theme(axis.text.x = element_text(angle = 45, hjust=1), legend.title=element_text(size=10)) +
+  labs(x= "" , y="Explained variation")+
+  #scale_fill_brewer(palette = "Paired")+
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values=pairPalette) +
+  theme(axis.text.x=element_blank()) +
+  scale_x_discrete(expand = c(0.3, 0.3))
+plotC_16S_root
+
+
+#####For ITS#####
+#Overview figure with interaction
+#Rhizosphere microbiome overview calculation
+#Direct effects T and P
+direct_effects_rhizo_tot <- rowSums( abs(SEM_results[c(1:2),c(19:25)]) * abs(vsize_ITS[c(1:2),c(1:7)]))
+direct_effects_rhizo_mar <- rowSums( abs(SEM_results[c(1:2),c(19:25)]) * abs(vsize_ITS_R2marginal[c(1:2),c(1:7)]) )
+direct_effects_rhizo_ran <- rowSums( abs(SEM_results[c(1:2),c(19:25)]) * abs(vsize_ITS_R2random[c(1:2),c(1:7)]) )
+direct_effects_rhizo_un <- rowSums( abs(SEM_results[c(1:2),c(19:25)]) * abs(vsize_ITS_R2unexplained[c(1:2),c(1:7)]) )
+
+#Indirect effects T and P together including interaction pathways
+indirect_mediators_rhizo_tot_incl <- rowSums( abs(SEM_results[c(3:14),c(19:25)]) * abs(vsize_ITS[c(3:14),c(1:7)]) *
+                                                matrix(rep(indirect_pathways_total,7), nrow = 12, byrow=F) )
+indirect_mediators_rhizo_mar_incl <- rowSums( abs(SEM_results[c(3:14),c(19:25)]) * abs(vsize_ITS_R2marginal[c(3:14),c(1:7)]) *
+                                                matrix(rep(indirect_pathways_total,7), nrow = 12, byrow=F) )
+indirect_mediators_rhizo_ran_incl <- rowSums( abs(SEM_results[c(3:14),c(19:25)]) * abs(vsize_ITS_R2random[c(3:14),c(1:7)]) *
+                                                matrix(rep(indirect_pathways_total,7), nrow = 12, byrow=F) )
+indirect_mediators_rhizo_un_incl <- rowSums( abs(SEM_results[c(3:14),c(19:25)]) * abs(vsize_ITS_R2unexplained[c(3:14),c(1:7)]) *
+                                               matrix(rep(indirect_pathways_total,7), nrow = 12, byrow=F) )
+
+#Indirect effects T and P together excluding interaction pathways
+indirect_mediators_rhizo_tot_excl <- rowSums( abs(SEM_results[c(5,7,14),c(19:25)]) * abs(vsize_ITS[c(5,7,14),c(1:7)]) *
+                                                matrix(rep(indirect_pathways_total[c(3,5,12)],7), nrow = 3, byrow=F) )
+indirect_mediators_rhizo_mar_excl <- rowSums( abs(SEM_results[c(5,7,14),c(19:25)]) * abs(vsize_ITS_R2marginal[c(5,7,14),c(1:7)]) *
+                                                matrix(rep(indirect_pathways_total[c(3,5,12)],7), nrow = 3, byrow=F) )
+indirect_mediators_rhizo_ran_excl <- rowSums( abs(SEM_results[c(5,7,14),c(19:25)]) * abs(vsize_ITS_R2random[c(5,7,14),c(1:7)]) *
+                                                matrix(rep(indirect_pathways_total[c(3,5,12)],7), nrow = 3, byrow=F) )
+indirect_mediators_rhizo_un_excl <- rowSums( abs(SEM_results[c(5,7,14),c(19:25)]) * abs(vsize_ITS_R2unexplained[c(5,7,14),c(1:7)]) *
+                                               matrix(rep(indirect_pathways_total[c(3,5,12)],7), nrow = 3, byrow=F) )
+
+#Indirect effects TP interaction
+indirect_mediators_rhizo_tot_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_ITS[c(3:4,6,8:13),c(1:7)]) *
+                                              matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+indirect_mediators_rhizo_mar_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_ITS_R2marginal[c(3:4,6,8:13),c(1:7)]) *
+                                              matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+indirect_mediators_rhizo_ran_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_ITS_R2random[c(3:4,6,8:13),c(1:7)]) *
+                                              matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+indirect_mediators_rhizo_un_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_ITS_R2unexplained[c(3:4,6,8:13),c(1:7)]) *
+                                             matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+
+#Indirect T including interaction
+indirect_T_rhizo_tot_incl <- sum( abs(SEM_results[c(3:4,6:14),c(19:25)]) * abs(vsize_ITS[c(3:4,6:14),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_T,7), nrow = 11, byrow=F) )
+indirect_T_rhizo_mar_incl <- sum( abs(SEM_results[c(3:4,6:14),c(19:25)]) * abs(vsize_ITS_R2marginal[c(3:4,6:14),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_T,7), nrow = 11, byrow=F) )
+indirect_T_rhizo_ran_incl <- sum( abs(SEM_results[c(3:4,6:14),c(19:25)]) * abs(vsize_ITS_R2random[c(3:4,6:14),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_T,7), nrow = 11, byrow=F) )
+indirect_T_rhizo_un_incl <- sum( abs(SEM_results[c(3:4,6:14),c(19:25)]) * abs(vsize_ITS_R2unexplained[c(3:4,6:14),c(1:7)]) *
+                                   matrix(rep(indirect_pathways_T,7), nrow = 11, byrow=F) )
+
+#Indirect T excluding interaction (pathways unique to temperature)
+indirect_T_rhizo_tot_excl <- sum( abs(SEM_results[c(7,14),c(19:25)]) * abs(vsize_ITS[c(7,14),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_T[c(4,11)],7), nrow = 2, byrow=F) )
+indirect_T_rhizo_mar_excl <- sum( abs(SEM_results[c(7,14),c(19:25)]) * abs(vsize_ITS_R2marginal[c(7,14),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_T[c(4,11)],7), nrow = 2, byrow=F) )
+indirect_T_rhizo_ran_excl <- sum( abs(SEM_results[c(7,14),c(19:25)]) * abs(vsize_ITS_R2random[c(7,14),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_T[c(4,11)],7), nrow = 2, byrow=F) )
+indirect_T_rhizo_un_excl <- sum( abs(SEM_results[c(7,14),c(19:25)]) * abs(vsize_ITS_R2unexplained[c(7,14),c(1:7)]) *
+                                   matrix(rep(indirect_pathways_T[c(4,11)],7), nrow = 2, byrow=F) )
+
+#Indirect P including interaction
+indirect_P_rhizo_tot_incl <- sum( abs(SEM_results[c(3:6,8:13),c(19:25)]) * abs(vsize_ITS[c(3:6,8:13),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_P,7), nrow = 10, byrow=F) )
+indirect_P_rhizo_mar_incl <- sum( abs(SEM_results[c(3:6,8:13),c(19:25)]) * abs(vsize_ITS_R2marginal[c(3:6,8:13),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_P,7), nrow = 10, byrow=F) )
+indirect_P_rhizo_ran_incl <- sum( abs(SEM_results[c(3:6,8:13),c(19:25)]) * abs(vsize_ITS_R2random[c(3:6,8:13),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_P,7), nrow = 10, byrow=F) )
+indirect_P_rhizo_un_incl <- sum( abs(SEM_results[c(3:6,8:13),c(19:25)]) * abs(vsize_ITS_R2unexplained[c(3:6,8:13),c(1:7)]) *
+                                   matrix(rep(indirect_pathways_P,7), nrow = 10, byrow=F) )
+
+#Indirect P excluding interaction (unique to precipitation)
+indirect_P_rhizo_tot_excl <- sum( abs(SEM_results[c(5),c(19:25)]) * abs(vsize_ITS[c(5),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_P[3],7), nrow = 1, byrow=F) )
+indirect_P_rhizo_mar_excl <- sum( abs(SEM_results[c(5),c(19:25)]) * abs(vsize_ITS_R2marginal[c(5),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_P[3],7), nrow = 1, byrow=F) )
+indirect_P_rhizo_ran_excl <- sum( abs(SEM_results[c(5),c(19:25)]) * abs(vsize_ITS_R2random[c(5),c(1:7)]) *
+                                    matrix(rep(indirect_pathways_P[3],7), nrow = 1, byrow=F) )
+indirect_P_rhizo_un_excl <- sum( abs(SEM_results[c(5),c(19:25)]) * abs(vsize_ITS_R2unexplained[c(5),c(1:7)]) *
+                                   matrix(rep(indirect_pathways_P[3],7), nrow = 1, byrow=F) )
+
+#Interaction T and P pathways (pathways affected by both: T x P pathways)
+indirect_TP_rhizo_tot <- sum( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_ITS[c(3:4,6,8:13),c(1:7)]) *
+                                matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+indirect_TP_rhizo_mar <- sum( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_ITS_R2marginal[c(3:4,6,8:13),c(1:7)]) *
+                                matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+indirect_TP_rhizo_ran <- sum( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_ITS_R2random[c(3:4,6,8:13),c(1:7)]) *
+                                matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+indirect_TP_rhizo_un <- sum( abs(SEM_results[c(3:4,6,8:13),c(19:25)]) * abs(vsize_ITS_R2unexplained[c(3:4,6,8:13),c(1:7)]) *
+                               matrix(rep(indirect_pathways_TP,7), nrow = 9, byrow=F) )
+
+#Sum rhizosphere contributions excluding interaction part
+#Temperature
+total_T_rhizo_tot_excl <- direct_effects_rhizo_tot[1] + indirect_T_rhizo_tot_excl
+total_T_rhizo_mar_excl <- direct_effects_rhizo_mar[1] + indirect_T_rhizo_mar_excl
+total_T_rhizo_ran_excl <- direct_effects_rhizo_ran[1] + indirect_T_rhizo_ran_excl
+total_T_rhizo_un_excl <- direct_effects_rhizo_un[1] + indirect_T_rhizo_un_excl
+total_T_rhizo_tot_excl
+sum(total_T_rhizo_mar_excl,total_T_rhizo_ran_excl,total_T_rhizo_un_excl)
+#check
+
+#Precipitation
+total_P_rhizo_tot_excl <- direct_effects_rhizo_tot[2] + indirect_P_rhizo_tot_excl
+total_P_rhizo_mar_excl <- direct_effects_rhizo_mar[2] + indirect_P_rhizo_mar_excl
+total_P_rhizo_ran_excl <- direct_effects_rhizo_ran[2] + indirect_P_rhizo_ran_excl
+total_P_rhizo_un_excl <- direct_effects_rhizo_un[2] + indirect_P_rhizo_un_excl
+total_P_rhizo_tot_excl
+sum(total_P_rhizo_mar_excl,total_P_rhizo_ran_excl,total_P_rhizo_un_excl)
+#check
+
+#Interaction
+total_TP_rhizo_tot <- indirect_TP_rhizo_tot
+total_TP_rhizo_mar <- indirect_TP_rhizo_mar
+total_TP_rhizo_ran <- indirect_TP_rhizo_ran
+total_TP_rhizo_un <- indirect_TP_rhizo_un
+total_TP_rhizo_tot
+sum(total_TP_rhizo_mar,total_TP_rhizo_ran,total_TP_rhizo_un)
+#check
+
+#All
+total_rhizo_tot_excl <- total_T_rhizo_tot_excl + total_P_rhizo_tot_excl + total_TP_rhizo_tot
+total_rhizo_mar_excl <- total_T_rhizo_mar_excl + total_P_rhizo_mar_excl + total_TP_rhizo_mar
+total_rhizo_ran_excl <- total_T_rhizo_ran_excl + total_P_rhizo_ran_excl + total_TP_rhizo_ran
+total_rhizo_un_excl <- total_T_rhizo_un_excl + total_P_rhizo_un_excl + total_TP_rhizo_un
+total_rhizo_tot_excl
+sum(total_rhizo_mar_excl,total_rhizo_ran_excl,total_rhizo_un_excl)
+#check
+
+
+#Root microbiome overview calculation
+#Direct effects T and P
+direct_effects_root_tot <- rowSums( abs(SEM_results[c(1:2),c(30:40)]) * abs(vsize_ITS[c(1:2),c(8:18)]))
+direct_effects_root_mar <- rowSums( abs(SEM_results[c(1:2),c(30:40)]) * abs(vsize_ITS_R2marginal[c(1:2),c(8:18)]) )
+direct_effects_root_ran <- rowSums( abs(SEM_results[c(1:2),c(30:40)]) * abs(vsize_ITS_R2random[c(1:2),c(8:18)]) )
+direct_effects_root_un <- rowSums( abs(SEM_results[c(1:2),c(30:40)]) * abs(vsize_ITS_R2unexplained[c(1:2),c(8:18)]) )
+
+#Indirect effects T and P together including interaction pathways
+indirect_mediators_root_tot_incl <- rowSums( abs(SEM_results[c(3:14),c(30:40)]) * abs(vsize_ITS[c(3:14),c(8:18)]) *
+                                               matrix(rep(indirect_pathways_total,11), nrow = 12, byrow=F) )
+indirect_mediators_root_mar_incl <- rowSums( abs(SEM_results[c(3:14),c(30:40)]) * abs(vsize_ITS_R2marginal[c(3:14),c(8:18)]) *
+                                               matrix(rep(indirect_pathways_total,11), nrow = 12, byrow=F) )
+indirect_mediators_root_ran_incl <- rowSums( abs(SEM_results[c(3:14),c(30:40)]) * abs(vsize_ITS_R2random[c(3:14),c(8:18)]) *
+                                               matrix(rep(indirect_pathways_total,11), nrow = 12, byrow=F) )
+indirect_mediators_root_un_incl <- rowSums( abs(SEM_results[c(3:14),c(30:40)]) * abs(vsize_ITS_R2unexplained[c(3:14),c(8:18)]) *
+                                              matrix(rep(indirect_pathways_total,11), nrow = 12, byrow=F) )
+
+#Indirect effects T and P together excluding interaction pathways
+indirect_mediators_root_tot_excl <- rowSums( abs(SEM_results[c(5,7,14),c(30:40)]) * abs(vsize_ITS[c(5,7,14),c(8:18)]) *
+                                               matrix(rep(indirect_pathways_total[c(3,5,12)],11), nrow = 3, byrow=F) )
+indirect_mediators_root_mar_excl <- rowSums( abs(SEM_results[c(5,7,14),c(30:40)]) * abs(vsize_ITS_R2marginal[c(5,7,14),c(8:18)]) *
+                                               matrix(rep(indirect_pathways_total[c(3,5,12)],11), nrow = 3, byrow=F) )
+indirect_mediators_root_ran_excl <- rowSums( abs(SEM_results[c(5,7,14),c(30:40)]) * abs(vsize_ITS_R2random[c(5,7,14),c(8:18)]) *
+                                               matrix(rep(indirect_pathways_total[c(3,5,12)],11), nrow = 3, byrow=F) )
+indirect_mediators_root_un_excl <- rowSums( abs(SEM_results[c(5,7,14),c(30:40)]) * abs(vsize_ITS_R2unexplained[c(5,7,14),c(8:18)]) *
+                                              matrix(rep(indirect_pathways_total[c(3,5,12)],11), nrow = 3, byrow=F) )
+
+#Indirect effects TP interaction
+indirect_mediators_root_tot_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_ITS[c(3:4,6,8:13),c(8:18)]) *
+                                             matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+indirect_mediators_root_mar_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_ITS_R2marginal[c(3:4,6,8:13),c(8:18)]) *
+                                             matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+indirect_mediators_root_ran_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_ITS_R2random[c(3:4,6,8:13),c(8:18)]) *
+                                             matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+indirect_mediators_root_un_TP <- rowSums( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_ITS_R2unexplained[c(3:4,6,8:13),c(8:18)]) *
+                                            matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+
+#Indirect T including interaction
+indirect_T_root_tot_incl <- sum( abs(SEM_results[c(3:4,6:14),c(30:40)]) * abs(vsize_ITS[c(3:4,6:14),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_T,11), nrow = 11, byrow=F) )
+indirect_T_root_mar_incl <- sum( abs(SEM_results[c(3:4,6:14),c(30:40)]) * abs(vsize_ITS_R2marginal[c(3:4,6:14),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_T,11), nrow = 11, byrow=F) )
+indirect_T_root_ran_incl <- sum( abs(SEM_results[c(3:4,6:14),c(30:40)]) * abs(vsize_ITS_R2random[c(3:4,6:14),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_T,11), nrow = 11, byrow=F) )
+indirect_T_root_un_incl <- sum( abs(SEM_results[c(3:4,6:14),c(30:40)]) * abs(vsize_ITS_R2unexplained[c(3:4,6:14),c(8:18)]) *
+                                  matrix(rep(indirect_pathways_T,11), nrow = 11, byrow=F) )
+
+#Indirect T excluding interaction (pathways unique to temperature)
+indirect_T_root_tot_excl <- sum( abs(SEM_results[c(7,14),c(30:40)]) * abs(vsize_ITS[c(7,14),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_T[c(4,11)],11), nrow = 2, byrow=F) )
+indirect_T_root_mar_excl <- sum( abs(SEM_results[c(7,14),c(30:40)]) * abs(vsize_ITS_R2marginal[c(7,14),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_T[c(4,11)],11), nrow = 2, byrow=F) )
+indirect_T_root_ran_excl <- sum( abs(SEM_results[c(7,14),c(30:40)]) * abs(vsize_ITS_R2random[c(7,14),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_T[c(4,11)],11), nrow = 2, byrow=F) )
+indirect_T_root_un_excl <- sum( abs(SEM_results[c(7,14),c(30:40)]) * abs(vsize_ITS_R2unexplained[c(7,14),c(8:18)]) *
+                                  matrix(rep(indirect_pathways_T[c(4,11)],11), nrow = 2, byrow=F) )
+
+#Indirect P including interaction
+indirect_P_root_tot_incl <- sum( abs(SEM_results[c(3:6,8:13),c(30:40)]) * abs(vsize_ITS[c(3:6,8:13),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_P,11), nrow = 10, byrow=F) )
+indirect_P_root_mar_incl <- sum( abs(SEM_results[c(3:6,8:13),c(30:40)]) * abs(vsize_ITS_R2marginal[c(3:6,8:13),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_P,11), nrow = 10, byrow=F) )
+indirect_P_root_ran_incl <- sum( abs(SEM_results[c(3:6,8:13),c(30:40)]) * abs(vsize_ITS_R2random[c(3:6,8:13),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_P,11), nrow = 10, byrow=F) )
+indirect_P_root_un_incl <- sum( abs(SEM_results[c(3:6,8:13),c(30:40)]) * abs(vsize_ITS_R2unexplained[c(3:6,8:13),c(8:18)]) *
+                                  matrix(rep(indirect_pathways_P,11), nrow = 10, byrow=F) )
+
+#Indirect P excluding interaction (unique to precipitation)
+indirect_P_root_tot_excl <- sum( abs(SEM_results[c(5),c(30:40)]) * abs(vsize_ITS[c(5),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_P[3],11), nrow = 1, byrow=F) )
+indirect_P_root_mar_excl <- sum( abs(SEM_results[c(5),c(30:40)]) * abs(vsize_ITS_R2marginal[c(5),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_P[3],11), nrow = 1, byrow=F) )
+indirect_P_root_ran_excl <- sum( abs(SEM_results[c(5),c(30:40)]) * abs(vsize_ITS_R2random[c(5),c(8:18)]) *
+                                   matrix(rep(indirect_pathways_P[3],11), nrow = 1, byrow=F) )
+indirect_P_root_un_excl <- sum( abs(SEM_results[c(5),c(30:40)]) * abs(vsize_ITS_R2unexplained[c(5),c(8:18)]) *
+                                  matrix(rep(indirect_pathways_P[3],11), nrow = 1, byrow=F) )
+
+#Interaction T and P pathways (pathways affected by both: T x P pathways)
+indirect_TP_root_tot <- sum( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_ITS[c(3:4,6,8:13),c(8:18)]) *
+                               matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+indirect_TP_root_mar <- sum( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_ITS_R2marginal[c(3:4,6,8:13),c(8:18)]) *
+                               matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+indirect_TP_root_ran <- sum( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_ITS_R2random[c(3:4,6,8:13),c(8:18)]) *
+                               matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+indirect_TP_root_un <- sum( abs(SEM_results[c(3:4,6,8:13),c(30:40)]) * abs(vsize_ITS_R2unexplained[c(3:4,6,8:13),c(8:18)]) *
+                              matrix(rep(indirect_pathways_TP,11), nrow = 9, byrow=F) )
+
+#Sum root contributions excluding interaction part
+#Temperature
+total_T_root_tot_excl <- direct_effects_root_tot[1] + indirect_T_root_tot_excl
+total_T_root_mar_excl <- direct_effects_root_mar[1] + indirect_T_root_mar_excl
+total_T_root_ran_excl <- direct_effects_root_ran[1] + indirect_T_root_ran_excl
+total_T_root_un_excl <- direct_effects_root_un[1] + indirect_T_root_un_excl
+total_T_root_tot_excl
+sum(total_T_root_mar_excl,total_T_root_ran_excl,total_T_root_un_excl)
+#check
+
+#Precipitation
+total_P_root_tot_excl <- direct_effects_root_tot[2] + indirect_P_root_tot_excl
+total_P_root_mar_excl <- direct_effects_root_mar[2] + indirect_P_root_mar_excl
+total_P_root_ran_excl <- direct_effects_root_ran[2] + indirect_P_root_ran_excl
+total_P_root_un_excl <- direct_effects_root_un[2] + indirect_P_root_un_excl
+total_P_root_tot_excl
+sum(total_P_root_mar_excl,total_P_root_ran_excl,total_P_root_un_excl)
+#check
+
+#Interaction
+total_TP_root_tot <- indirect_TP_root_tot
+total_TP_root_mar <- indirect_TP_root_mar
+total_TP_root_ran <- indirect_TP_root_ran
+total_TP_root_un <- indirect_TP_root_un
+total_TP_root_tot
+sum(total_TP_root_mar,total_TP_root_ran,total_TP_root_un)
+#check
+
+#All
+total_root_tot_excl <- total_T_root_tot_excl + total_P_root_tot_excl + total_TP_root_tot
+total_root_mar_excl <- total_T_root_mar_excl + total_P_root_mar_excl + total_TP_root_mar
+total_root_ran_excl <- total_T_root_ran_excl + total_P_root_ran_excl + total_TP_root_ran
+total_root_un_excl <- total_T_root_un_excl + total_P_root_un_excl + total_TP_root_un
+total_root_tot_excl
+sum(total_root_mar_excl,total_root_ran_excl,total_root_un_excl)
+#check
+
+#Convert to percentages overall
+group <- c("T_rhizo", "P_rhizo", "TP_rhizo", "random_rhizo", "unexplained_rhizo", "T_root", "P_root", "TP_root", "random_root", "unexplained_root")
+figA_perc_y <- c(total_T_rhizo_mar_excl/total_rhizo_tot_excl, total_P_rhizo_mar_excl/total_rhizo_tot_excl, total_TP_rhizo_mar/total_rhizo_tot_excl,
+                 total_rhizo_ran_excl/total_rhizo_tot_excl, total_rhizo_un_excl/total_rhizo_tot_excl, 
+                 total_T_root_mar_excl/total_root_tot_excl, total_P_root_mar_excl/total_root_tot_excl, total_TP_root_mar/total_root_tot_excl,
+                 total_root_ran_excl/total_root_tot_excl, total_root_un_excl/total_root_tot_excl)
+figA_data_ITS <- data.frame(group, figA_perc_y)
+figA_data_ITS$group <- factor(figA_data_ITS$group, levels=c("T_rhizo", "P_rhizo", "TP_rhizo", "random_rhizo", "unexplained_rhizo", "T_root", "P_root", "TP_root", "random_root", "unexplained_root"), ordered=TRUE)
+figA_data_ITS$compartment <- c("Rhizosphere", "Rhizosphere", "Rhizosphere", "Rhizosphere", "Rhizosphere", "Root", "Root", "Root", "Root", "Root")
+figA_data_ITS$label <- c("Temperature", "Precipitation", "Joint", "Random", "Unexplained", 
+                         "Temperature", "Precipitation", "Joint", "Random", "Unexplained")
+figA_data_ITS$label <- factor(figA_data_ITS$label, levels=c("Temperature", "Precipitation", "Joint", "Random", "Unexplained"))
+
+#Figure with stacked bars
+pairPalette <- c("#E31A1C", "#1F78B4", "#6A3D9A", "gray60", "lightgrey", "#A6CEE3", "#33A02C","#B2DF8A",  "#FB9A99",
+                 "#FF7F00",  "#6A3D9A","#CAB2D6",  "#B15928", "#FFFF99", "black") # "#E31A1C", "#1F78B4", "#FFCC00"
+
+figA_data_ITS_rhizo <- figA_data_ITS[which(figA_data_ITS$compartment == "Rhizosphere"),]
+figA_data_ITS_root <- figA_data_ITS[which(figA_data_ITS$compartment == "Root"),]
+
+plotA_ITS_rhizo <- ggplot(figA_data_ITS_rhizo, aes(x = "none", y=figA_perc_y, fill=label, group = group)) +
+  #facet_wrap(~ compartment) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  ggtitle("Fungi") +
+  #theme(axis.text.x = element_text(angle = 45, hjust=1), legend.title=element_text(size=10)) +
+  labs(x= "" , y="Variation")+
+  #scale_fill_brewer(palette = "Paired")+
+  scale_fill_manual(values=pairPalette) +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x=element_blank()) +
+  scale_x_discrete(expand = c(0.3, 0.3)) +
+  theme(legend.spacing.y = unit(0.25, 'cm'))  +
+  ## important additional element
+  guides(fill = guide_legend(byrow = TRUE, title = "Explained by\n(combined pathways\nrelating to)"))
+plotA_ITS_rhizo
+
+plotA_ITS_root <- ggplot(figA_data_ITS_root, aes(x = "none", y=figA_perc_y, fill=label, group = group)) +
+  #facet_wrap(~ compartment) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  ggtitle("Fungi") +
+  #theme(axis.text.x = element_text(angle = 45, hjust=1), legend.title=element_text(size=10)) +
+  labs(x= "" , y="Variation")+
+  #scale_fill_brewer(palette = "Paired")+
+  scale_fill_manual(values=pairPalette) +
+  theme(axis.text.x=element_blank()) +
+  scale_x_discrete(expand = c(0.3, 0.3)) +
+  scale_y_continuous(labels = scales::percent) +
+  theme(legend.spacing.y = unit(0.25, 'cm'))  +
+  ## important additional element
+  guides(fill = guide_legend(byrow = TRUE, title = "Explained by\n(combined pathways\nrelating to)"))
+plotA_ITS_root
+
+#####per pathways ITS#####
+#Calculate percentages rhizosphere
+group <- c("Temperature", "Precipitation", "Start growing season", "Winter temperature", "Avg soil moisture", "Circadian soil moisture",
+           "Forb cover", "Shrub cover", "Bryophyte cover", "Plant diversity", "Litter cover", "Soil pH", "Soil PO4", "Soil NO3")
+figB_perc_y <- c(direct_effects_rhizo_mar, indirect_mediators_rhizo_mar_TP[1:2], indirect_mediators_rhizo_mar_excl[1], indirect_mediators_rhizo_mar_TP[3],
+                 indirect_mediators_rhizo_mar_excl[2], indirect_mediators_rhizo_mar_TP[4:9], indirect_mediators_rhizo_mar_excl[3])/
+  sum(direct_effects_rhizo_mar, indirect_mediators_rhizo_mar_TP, indirect_mediators_rhizo_mar_excl)
+figB_data_ITS <- data.frame(group, figB_perc_y)
+figB_data_ITS$label <- c("Temperature", "Precipitation", "Start growing season", "Winter temperature", "Avg soil moisture", "Circadian soil moisture",
+                         "Forb cover", "Shrub cover", "Bryophyte cover", "Plant diversity", "Litter cover", "Soil pH", "Soil PO4", "Soil NO3")
+figB_data_ITS$label <- factor(figB_data_ITS$label, levels=c("Temperature", "Precipitation", "Start growing season", "Winter temperature", "Avg soil moisture", "Circadian soil moisture",
+                                                            "Forb cover", "Shrub cover", "Bryophyte cover", "Plant diversity", "Litter cover", "Soil pH", "Soil PO4", "Soil NO3"), ordered=TRUE)
+
+#Calculate percentages root
+group <- c("Temperature", "Precipitation", "Start growing season", "Winter temperature", "Avg soil moisture", "Circadian soil moisture",
+           "Forb cover", "Shrub cover", "Bryophyte cover", "Plant diversity", "Litter cover", "Soil pH", "Soil PO4", "Soil NO3")
+figC_perc_y <- c(direct_effects_root_mar, indirect_mediators_root_mar_TP[1:2], indirect_mediators_root_mar_excl[1], indirect_mediators_root_mar_TP[3],
+                 indirect_mediators_root_mar_excl[2], indirect_mediators_root_mar_TP[4:9], indirect_mediators_root_mar_excl[3])/
+  sum(direct_effects_root_mar, indirect_mediators_root_mar_TP, indirect_mediators_root_mar_excl)
+figC_data_ITS <- data.frame(group, figC_perc_y)
+figC_data_ITS$label <- c("Temperature", "Precipitation", "Start growing season", "Winter temperature", "Avg soil moisture", "Circadian soil moisture",
+                         "Forb cover", "Shrub cover", "Bryophyte cover", "Plant diversity", "Litter cover", "Soil pH", "Soil PO4", "Soil NO3")
+figC_data_ITS$label <- factor(figC_data_ITS$label, levels=c("Temperature", "Precipitation", "Start growing season", "Winter temperature", "Avg soil moisture", "Circadian soil moisture",
+                                                            "Forb cover", "Shrub cover", "Bryophyte cover", "Plant diversity", "Litter cover", "Soil pH", "Soil PO4", "Soil NO3"), ordered=TRUE)
+
+#Rhizosphere plotB
+pairPalette <- c("#E31A1C", "#1F78B4", "#FDBF6F", "#FF7F00", "#CAB2D6", "#CC33CC","#B2DF8A", "#66C2A5", "#33A02C", 
+                 "#FB9A99", "#B15928", "#A6CEE3", "#FFFF99", "grey20")
+
+plotB_ITS_rhizo <- ggplot(figB_data_ITS, aes(x = "none", y=figB_perc_y, fill=label)) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  ggtitle("Fungi") +
+  guides(fill=guide_legend(title="Explained by\n(final predictor)")) +
+  #theme(axis.text.x = element_text(angle = 45, hjust=1), legend.title=element_text(size=10)) +
+  labs(x= "" , y="Explained variation")+
+  #scale_fill_brewer(palette = "Paired")+
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values=pairPalette) +
+  theme(axis.text.x=element_blank()) +
+  scale_x_discrete(expand = c(0.3, 0.3))
+plotB_ITS_rhizo
+
+#Root plotC
+plotC_ITS_root <- ggplot(figC_data_ITS, aes(x = "none", y=figC_perc_y, fill=label)) +
+  geom_bar(width=0.6, stat="identity") +
+  theme_bw() +
+  ggtitle("Fungi") +
+  guides(fill=guide_legend(title="Explained by\n(final predictor)")) +
+  #theme(axis.text.x = element_text(angle = 45, hjust=1), legend.title=element_text(size=10)) +
+  labs(x= "" , y="Explained variation")+
+  #scale_fill_brewer(palette = "Paired")+
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values=pairPalette) +
+  theme(axis.text.x=element_blank()) +
+  scale_x_discrete(expand = c(0.3, 0.3))
+plotC_ITS_root
+
+#Save rhizosphere plots
+library(cowplot)
+
+prow_AB <-  plot_grid(plotA_16S_rhizo + theme(legend.position="none"), plotA_ITS_rhizo + theme(legend.position="none"),
+                      labels=c("A", "B"), ncol=2, nrow=1, align="hv", label_size=12, vjust=1.1)
+legend_AB <- get_legend(plotA_16S_rhizo + theme(legend.box.margin = margin(0, 0, 0, 12)))
+prow_AB_l <- plot_grid(prow_AB, legend_AB, ncol = 2, rel_widths = c(2,1))
+
+prow_CD <-  plot_grid(plotB_16S_rhizo + theme(legend.position="none"), plotB_ITS_rhizo + theme(legend.position="none"),
+                      labels=c("C", "D"), ncol=2, nrow=1, align="hv", label_size=12, vjust=1.1)
+legend_CD <- get_legend(plotB_16S_rhizo + theme(legend.box.margin = margin(0, 0, 0, 12)))
+prow_CD_l <- plot_grid(prow_CD, legend_CD, ncol = 2, rel_widths = c(2,1))
+
+prow_ABCD <- plot_grid(prow_AB_l, prow_CD_l, labels=c("", ""), ncol=2, nrow=1, 
+                       align="v", label_size=12, vjust=1.1, rel_widths = c(0.85, 1), axis = "bt")
+
+#Save
+save_plot("D:/Prague/4. Norway/MS/Figs/FigX_overviewSEM_rhizo_7.1.png", prow_ABCD,
+          ncol = 3, nrow = 1, base_aspect_ratio = 1, dpi=600, bg = "white") 
+
+#Save root plots
+library(cowplot)
+
+prow_EF <-  plot_grid(plotA_16S_root + theme(legend.position="none"), plotA_ITS_root + theme(legend.position="none"),
+                      labels=c("E", "F"), ncol=2, nrow=1, align="hv", label_size=12, vjust=1.1)
+legend_EF <- get_legend(plotA_16S_root + theme(legend.box.margin = margin(0, 0, 0, 12)))
+prow_EF_l <- plot_grid(prow_EF, legend_EF, ncol = 2, rel_widths = c(2,1))
+
+prow_GH <-  plot_grid(plotC_16S_root + theme(legend.position="none"), plotC_ITS_root + theme(legend.position="none"),
+                      labels=c("G", "H"), ncol=2, nrow=1, align="hv", label_size=12, vjust=1.1)
+legend_GH <- get_legend(plotC_16S_root + theme(legend.box.margin = margin(0, 0, 0, 12)))
+prow_GH_l <- plot_grid(prow_GH, legend_GH, ncol = 2, rel_widths = c(2,1))
+
+prow_EFGH <- plot_grid(prow_EF_l, prow_GH_l, labels=c("", ""), ncol=2, nrow=1, 
+                       align="v", label_size=12, vjust=1.1, rel_widths = c(0.85, 1), axis = "bt")
+
+#Save
+save_plot("D:/Prague/4. Norway/MS/Figs/FigX_overviewSEM_root_7.1.png", prow_EFGH,
+          ncol = 3, nrow = 1, base_aspect_ratio = 1, dpi=600, bg = "white") 
